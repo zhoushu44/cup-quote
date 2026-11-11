@@ -2,7 +2,7 @@
 # 纸杯报价系统 · 容器编排
 # 用法：
 #   docker compose up -d
-# 访问：http://<服务器IP>:8080
+# 访问：http://<服务器IP>:6655
 # ============================================================
 services:
   web:
@@ -15,9 +15,9 @@ services:
     container_name: paper-cup-quote
     restart: unless-stopped
 
-    # 宿主机 8080 → 容器 80
+    # 宿主机 6655 → 容器 80
     ports:
-      - "0.0.0.0:8080:80"
+      - "0.0.0.0:6655:80"
 
     # 只读根文件系统（nginx 需要的目录挂成 tmpfs）
     read_only: true

@@ -130,8 +130,8 @@
 双击 index.html
 
 # 方式二：本地起服务
-python -m http.server 8080
-# 访问 http://localhost:8080
+python -m http.server 6655
+# 访问 http://localhost:6655
 ```
 
 **首次使用建议顺序：**
@@ -164,7 +164,7 @@ python -m http.server 8080
 
 ```bash
 docker compose up -d --build
-# 访问 http://localhost:8080
+# 访问 http://localhost:6655
 ```
 
 ### 自动部署到服务器
@@ -241,3 +241,4 @@ paper-cup-quotation-system/
 ## License
 
 MIT
+
