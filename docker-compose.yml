@@ -1,0 +1,22 @@
+services:
+  web:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-local}/paper-cup-quote:${APP_VERSION:-1.0}
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-1.0}
+    container_name: paper-cup-quote
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

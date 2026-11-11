@@ -1,0 +1,31 @@
+# 依赖与系统文件
+node_modules/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 本地环境
+.env
+.env.local
+*.local
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+tmp/
+temp/
+
+# 构建产物（镜像在 CI 里构建，不入库）
+dist/
+build/
+
+# 密钥（绝对不要提交）
+*.pem
+*.key
+id_rsa*
+secrets.*

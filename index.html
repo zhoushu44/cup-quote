@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>纸杯报价</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="logo">纸杯报价</div>
+  <nav class="tabs mode-tabs">
+    <button data-mode="cup" class="mode-btn on">空纸杯</button>
+    <button data-mode="tea" class="mode-btn">茶叶杯</button>
+  </nav>
+
+  <nav class="tabs">
+    <button data-page="quote" class="on">报价</button>
+    <button data-page="cost">成本</button>
+    <button data-page="ship">快递</button>
+    <button data-page="kb">知识</button>
+  </nav>
+  <div class="bar-right">
+    <span class="saved" id="saveState">已保存</span>
+    <button class="link" id="btnReset">重置</button>
+  </div>
+</header>
+
+<main>
+  <!-- ============ 报价 ============ -->
+  <section class="page on" id="page-quote">
+    <div class="grid">
+
+      <!-- ① 计算 -->
+      <section class="box" id="panelCalc">
+        <div class="box-head">
+          <h2>计算</h2>
+          <button class="link" id="btnCopyPrice">复制价格</button>
+        </div>
+        <div class="box-body" id="calcCup">
+          <div class="field-row">
+            <label class="fld grow">
+              <span>杯型</span>
+              <select id="specSelect"></select>
+            </label>
+            <label class="fld w120">
+              <span>数量（只）</span>
+              <input type="number" id="qtyInput" min="1" step="100" value="10000">
+            </label>
+          </div>
+
+          <div class="spec-line">
+            <b id="specName">—</b>
+            <span id="specLine1"></span>
+            <span id="specLine2"></span>
+          </div>
+
+          <div class="cfg-summary" id="cfgSummary"></div>
+          <div class="lead-badge" id="leadBadge"></div>
+
+          <div class="weight-box" id="weightBox">
+            <div class="wb-row">
+              <span class="wb-l">单杯克重</span>
+              <b id="wbGram">—</b>
+              <span class="wb-sep"></span>
+              <span class="wb-l">总重量</span>
+              <b id="wbTotal">—</b>
+            </div>
+            <div class="wb-row wb-sub">
+              <span class="wb-l">箱规</span>
+              <span class="wb-val" id="wbBox">—</span>
+            </div>
+            <div class="wb-row wb-sub">
+              <span class="wb-l">装箱估算</span>
+              <span class="wb-val" id="wbCarton">—</span>
+            </div>
+          </div>
+
+          <table class="tiers" id="tierTable">
+            <thead>
+              <tr><th>档位</th><th class="r">毛利率</th><th class="r">单价</th><th class="r">金额</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="note" id="tierNote"></div>
+        </div>
+
+        <!-- 茶叶杯专用 -->
+        <div class="box-body" id="calcTea" style="display:none">
+          <div class="tea-head">
+            <div>
+              <b id="teaCupName">欧8双层铝箔杯</b>
+              <div class="tea-sub" id="teaCupSub">超厚300g · 外白卡+内铝箔 · 上口8*高9.2*下口5.6cm</div>
+            </div>
+            <div class="tea-badge">含茶叶</div>
+          </div>
+
+          <div class="field-row">
+            <label class="fld grow">
+              <span>杯子尺寸</span>
+              <select id="teaSize"></select>
+            </label>
+            <label class="fld grow">
+              <span>茶叶品种</span>
+              <select id="teaLeaf"></select>
+            </label>
+            <label class="fld w120">
+              <span>数量（杯）</span>
+              <select id="teaQty"></select>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label class="fld grow">
+              <span>茶叶等级</span>
+              <select id="teaGrade"></select>
+            </label>
+            <label class="fld grow">
+              <span>包装方式</span>
+              <select id="teaPack"></select>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label class="fld grow">
+              <span>茶叶来源</span>
+              <select id="teaSource">
+                <option value="ours">我方配茶（含在价内）</option>
+                <option value="client">客户提供茶叶（每杯减 0.2）</option>
+              </select>
+            </label>
+            <label class="fld w120">
+              <span>每杯净含量</span>
+              <input type="text" id="teaNet" readonly>
+            </label>
+          </div>
+
+          <div class="cfg-summary" id="teaSummary"></div>
+
+          <table class="tiers" id="teaTierTable">
+            <thead>
+              <tr><th>项目</th><th class="r">金额</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="note" id="teaNote"></div>
+        </div>
+      </section>
+
+      <!-- ② 文字识别 -->
+      <section class="box" id="panelOcr">
+        <div class="box-head"><h2>文字识别</h2><span class="dim">粘贴客户需求</span></div>
+        <div class="box-body">
+          <textarea id="ocrText" class="ta" placeholder="例：10万只 9盎司广告杯，268克，双层，内层268外层248，烫金加压纹，牛皮纸外层"></textarea>
+          <div class="btn-row">
+            <button class="btn" id="btnOcr">识别</button>
+            <button class="link" id="btnExample">示例</button>
+            <button class="link" id="btnClearOcr">清空</button>
+          </div>
+          <div id="ocrResult" class="ocr-out dim">识别结果会显示在这里</div>
+        </div>
+      </section>
+
+      <!-- ③ 报价单 -->
+      <section class="box" id="panelQuote">
+        <div class="box-head">
+          <h2>报价单</h2>
+          <div class="btns">
+            <select id="quoteTierSel" class="mini-sel" title="选择对外报价的档位">
+              <option value="0">按底价</option>
+              <option value="1">按标准价</option>
+              <option value="2">按品牌价</option>
+            </select>
+            <button class="link" id="btnCopyText">复制文字</button>
+            <button class="link" id="btnCopyImg">复制图片</button>
+            <button class="link" id="btnSaveImg">下载图片</button>
+            <button class="link" id="btnExportContract">导出合同</button>
+            <button class="link" id="btnPrint">打印</button>
+          </div>
+        </div>
+        <div class="box-body">
+          <div class="field-row compact">
+            <label class="fld grow"><span>客户公司</span><input type="text" id="qCustomer" placeholder="客户公司名称"></label>
+            <label class="fld grow"><span>客户税号</span><input type="text" id="qTaxNo" placeholder="纳税人识别号（可空）" maxlength="20"></label>
+          </div>
+          <div class="field-row compact">
+            <label class="fld grow"><span>联系人</span><input type="text" id="qContact" placeholder="姓名 电话"></label>
+            <label class="fld grow"><span>客户地址</span><input type="text" id="qAddr" placeholder="开票/收货地址（可空）"></label>
+            <label class="fld w110"><span>收货省份</span><select id="qProvince"><option value="">未选</option></select></label>
+            <label class="fld w110"><span>日期</span><input type="date" id="qDate"></label>
+            <label class="fld w80"><span>运费</span><input type="number" id="qFreight" placeholder="0" min="0"></label>
+          </div>
+          <div class="doc" id="quoteDoc"></div>
+        </div>
+      </section>
+
+      <!-- ④ 工艺 / 识别调整 -->
+      <section class="box" id="panelCraft">
+        <div class="box-head">
+          <h2>工艺 · 配置调整</h2>
+          <span class="dim" id="adjustHint">识别后在这里改</span>
+        </div>
+        <div class="box-body">
+
+          <div class="field-row">
+            <label class="fld grow">
+              <span>杯型</span>
+              <select id="specSelect2"></select>
+            </label>
+            <label class="fld w120">
+              <span>数量（只）</span>
+              <input type="number" id="qtyInput2" min="1" step="100" value="10000">
+            </label>
+          </div>
+
+          <div class="sub">结构 <em id="structHint"></em></div>
+          <div class="chips" id="structureChips"></div>
+
+          <div class="sub" id="paperLabel">纸张</div>
+          <div id="paperLayers"></div>
+
+          <div class="field-row" id="liningRow">
+            <label class="fld grow">
+              <span>淋膜</span>
+              <select id="liningSel"></select>
+            </label>
+            <label class="fld w120">
+              <span>成本（元/只）</span>
+              <input type="text" id="unitCostOut" readonly>
+            </label>
+          </div>
+
+          <div class="sub">工艺 <em>可多选</em></div>
+          <div class="crafts" id="craftChips"></div>
+
+          <div class="sub">开票 <em id="invoiceHint"></em></div>
+          <div class="chips" id="invoiceChips"></div>
+
+          <div class="sub">运费方式</div>
+          <div class="chips" id="shippingChips"></div>
+          <div class="field-row" id="freightRow">
+            <label class="fld grow"><span>运费金额（元）</span><input type="number" id="qFreight2" placeholder="0" min="0" step="1"></label>
+            <label class="fld w120"><span>到付 / 现付</span>
+              <select id="freightPay">
+                <option value="prepaid">现付（含在报价）</option>
+                <option value="collect">到付（客户自付）</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="sw-row">
+            <label class="sw"><input type="checkbox" id="urgentOn"><i></i><span>加急生产</span></label>
+            <span class="sw-note" id="urgentNote">交期压缩至 3 天，另加 ¥300/单</span>
+          </div>
+          <div class="field-row">
+            <label class="fld"><span>打样 / 专版费（元）</span><input type="number" id="qOther" placeholder="0" min="0"></label>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+  </section>
+
+  <!-- ============ 成本 ============ -->
+  <section class="page" id="page-cost">
+    <div class="cost-wrap">
+      <div class="cost-bar">
+        <h2>成本梯度</h2>
+        <div class="btns">
+          <button class="link" id="btnFillSuggest">填充参考值</button>
+          <button class="link" id="btnExportCost">导出 CSV</button>
+          <button class="link" id="btnExportAll">导出备份</button>
+          <button class="link" id="btnImport">导入备份</button>
+          <input type="file" id="fileImport" accept=".json" hidden>
+        </div>
+      </div>
+
+      <div class="cost-tabs">
+        <button class="on" data-cost-tab="grad" data-mode="cup">数量梯度</button>
+        <button data-cost-tab="addon" data-mode="cup">加价项</button>
+        <button data-cost-tab="craft">工艺</button>
+        <button data-cost-tab="weight" data-mode="cup">重量·箱规</button>
+        <button class="tea-tab" data-cost-tab="teaweight" data-mode="tea" style="display:none">重量·箱规</button>
+        <button class="tea-tab" data-cost-tab="tea" data-mode="tea" style="display:none">茶叶杯</button>
+        <button data-cost-tab="lead">发货时间</button>
+        <button data-cost-tab="param">参数</button>
+      </div>
+
+      <div class="card" id="costTabGrad">
+        <div class="grad-head">
+          <span class="grad-label">数量档位（只）</span>
+          <div class="grad-list" id="gradList"></div>
+        </div>
+        <div class="scroll"><table class="ct" id="gradTable"></table></div>
+        <div style="padding:6px 4px 0"><button class="link" id="btnAddSpec">＋ 添加杯型</button><span class="dim" style="margin-left:8px;font-size:10.5px">自定义杯型可删除、上下移动</span></div>
+        <p class="tip">填每个杯型在各数量档位的<b>单只成本</b>（元/只）。报价时按实际数量在相邻两档之间对数插值。留空表示该档不报价。</p>
+      </div>
+
+      <!-- 重量 / 箱规（独立标签页） -->
+      <div class="card" id="costTabWeight" style="display:none">
+        <div class="grad-head">
+          <span class="grad-label">重量 · 箱规</span>
+          <div class="btns">
+            <span class="dim" id="wtHint">需手动填写</span>
+          </div>
+        </div>
+        <div class="scroll" style="max-height:none"><table class="ct" id="wtTable"></table></div>
+        <p class="tip">
+          <b>单杯克重</b>：必须手动填写（实测称重值）。未填则总重显示「—」。<br>
+          <b>箱规</b>：拆成「每箱装几只 + 长×宽×高(cm)」，全部手动填。
+        </p>
+      </div>
+
+      <div class="card" id="costTabAddon" style="display:none">
+        <div class="scroll"><table class="ct" id="addonTable"></table></div>
+        <p class="tip">梯度表填<b>单层、单淋膜、食品级杯纸、默认克重</b>的成本；换结构、换材质、加减克重、加淋膜时，在这里加价。</p>
+      </div>
+
+      <div class="card" id="costTabCraft" style="display:none">
+        <div class="scroll"><table class="ct" id="craftCostTable"></table></div>
+        <div style="padding:6px 4px 0"><button class="link" id="btnAddCraft">＋ 添加工艺</button><span class="dim" style="margin-left:8px;font-size:10.5px">自定义工艺可删除、上下移动</span></div>
+        <p class="tip">工艺按只加价，版费一次性。</p>
+      </div>
+
+      <!-- 茶叶杯 重量·箱规 -->
+      <div class="card" id="costTabTeaweight" style="display:none">
+        <div class="grad-head">
+          <span class="grad-label">茶叶杯 重量 · 箱规</span>
+          <span class="dim">单杯克重需手动填写</span>
+        </div>
+        <div class="scroll" style="max-height:none"><table class="ct" id="teaWtTable"></table></div>
+        <p class="tip">
+          <b>单杯克重</b>：手动填（含杯身+茶叶，实测称重）。<br>
+          <b>箱规</b>：每箱只数 + 长×宽×高(cm)，按所选包装方式分别填。
+        </p>
+      </div>
+
+      <div class="card" id="costTabTea" style="display:none">
+        <div class="scroll"><table class="ct" id="teaCostTable"></table></div>
+        <p class="tip">茶叶杯的价格是<b>整单总价</b>（不是单价）。改这里的数字，报价页会立即跟着变。</p>
+        <div class="scroll" style="border-top:1px solid var(--line2)"><table class="ct" id="teaSizeTable"></table></div>
+        <p class="tip">尺寸加价按<b>单杯</b>算。以欧8为基础，每升一档 +0.05。</p>
+        <div class="scroll" style="border-top:1px solid var(--line2)"><table class="ct" id="teaPackTable"></table></div>
+        <p class="tip">包装加价按<b>单杯</b>算，乘上数量后计入总价。</p>
+      </div>
+
+      <div class="card" id="costTabLead" style="display:none">
+        <div class="scroll"><table class="ct" id="leadTable"></table></div>
+        <p class="tip" id="leadHintCup"><b>发货天数 = 基准 + 杯型分组 + 结构 + 各工艺（累加）+ 克重（取最重一层）</b>。例如：9盎司双层杯 + 烫金 + 压纹，268g → 7 + 0 + 2 + 2 + 1 + 0 = <b>12 天</b>。</p>
+        <p class="tip" id="leadHintTea" style="display:none"><b>发货天数 = 基准 + 尺寸加天数 + 数量档加天数</b>。例如：16盎司 + 1,000 杯 → 7 + 1 + 3 = <b>11 天</b>。</p>
+      </div>
+
+      <div class="card" id="costTabParam" style="display:none">
+        <div class="params" id="paramGrid"></div>
+        <p class="tip">单价 = 成本 ÷ (1 − 毛利率) × (1 + 税点)。税点由「开票类型」决定，也可单独调整。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 快递 ============ -->
+  <!-- ============ 快递 ============ -->
+  <section class="page" id="page-ship">
+    <div class="cost-wrap">
+      <div class="cost-bar">
+        <h2>快递运费</h2>
+        <div class="btns">
+          <button class="link" id="btnShipExport">导出 CSV</button>
+        </div>
+      </div>
+      <div class="cost-tabs" id="shipTabs"></div>
+      <div id="shipPanels"></div>
+
+      <div class="card">
+        <div class="grad-head">
+          <span class="grad-label">报价试算（当前订单）</span>
+          <span class="dim" id="shipQuoteInfo"></span>
+        </div>
+        <div class="scroll" style="max-height:none"><table class="ct" id="shipQuoteTable"></table></div>
+        <p class="tip">按当前订单（杯型 / 数量 / 箱规 / 克重）试算每家运费；报价页选中的快递会自动带出这里的运费。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 知识 ============ -->  <!-- ============ 知识 ============ -->
+  <section class="page" id="page-kb">
+    <div class="kb-wrap">
+      <nav class="kb-nav">
+        <a href="#k1">规格</a><a href="#k2">结构</a><a href="#k3">纸张</a>
+        <a href="#k4">淋膜</a><a href="#k5">工艺</a><a href="#k6">成本</a>
+        <a href="#k7">箱规</a><a href="#k8">坑位</a><a href="#k9">标准</a>
+      </nav>
+      <article class="kb">
+        <h1>纸杯知识</h1>
+        <p class="dim">做报价先弄清四件事：多大容量、什么结构、多少克纸、什么工艺。这四项决定 90% 的成本。</p>
+
+        <h2 id="k1">01 规格与容量</h2>
+        <p>行业用「盎司」称呼规格，但它是习惯叫法，不等于精确容量。同是 9oz，不同厂模具的上口、下口、高度不同，实际容量能差 10–20ml。报价和下单必须以上口×下口×高三项为准。</p>
+        <table class="kb-t">
+          <thead><tr><th>规格</th><th>容量</th><th>上口×下口×高(mm)</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>3oz</td><td>50–60ml</td><td>50×35×50</td><td>试饮</td></tr>
+            <tr><td>7oz</td><td>200ml</td><td>72×53×72</td><td>广告杯</td></tr>
+            <tr><td>8oz / 欧8</td><td>270–300ml</td><td>80×56×92</td><td>热饮、小杯奶茶</td></tr>
+            <tr><td>9oz</td><td>250ml</td><td>75×53×88</td><td>最常见广告杯</td></tr>
+            <tr><td>9.5oz</td><td>270ml</td><td>77×53×95</td><td>广告杯、茶叶杯</td></tr>
+            <tr><td>12oz</td><td>330–350ml</td><td>80×53×112</td><td>奶茶主力</td></tr>
+            <tr><td>14oz</td><td>400ml</td><td>90×58×110</td><td>奶茶、咖啡</td></tr>
+            <tr><td>16oz</td><td>500ml</td><td>90×58×133</td><td>大杯水果茶</td></tr>
+            <tr><td>22oz</td><td>700ml</td><td>90×58×168</td><td>超大杯</td></tr>
+          </tbody>
+        </table>
+        <p class="dim">1 美制液量盎司 ≈ 29.57ml，但纸杯按「满杯到杯口下方 5–10mm」计量，所以 9oz 标 250ml 而不是 266ml。</p>
+
+        <h2 id="k2">02 结构：单层 / 双层 / 中空 / 瓦楞 / 外贴</h2>
+        <p><b>单层</b>：一层纸 + 内壁淋膜，最轻最省，占定制杯绝大多数。装 90℃ 以上会烫手，一般配杯套。只需配 1 组纸。</p>
+        <p><b>双层</b>：杯身外再复合一层纸（常见 250–300g），手感厚实、隔热更好，印刷面在外层。需配 2 组纸：内层杯身 + 外层外套。</p>
+        <p><b>中空</b>：外层纸只在口底与内杯粘合，中间形成空气层，隔热最好，杯身明显变粗。行业常写「内 300g + 外 300g」。同样两层纸，但工艺更复杂、次品率高。</p>
+        <p><b>瓦楞</b>：外层用瓦楞纸（280–340g），凹凸形成空气隔热层，隔热最强、手感最硬，但印刷精细度差，多用于热饮外卖。</p>
+        <p><b>外贴</b>：成品杯身外套一层印刷纸或金属箔纸，做「换装」效果，起订量可以很低。</p>
+
+        <h2 id="k3">03 纸张与克重</h2>
+        <p>纸杯原纸多用食品级白卡或杯纸，常见 198 / 210 / 230 / 248 / 268 / 280 / 300 / 320 / 350g。克重越高挺度越好、成本越高，但同克重不同浆料手感差别很大。</p>
+        <ul>
+          <li>198–230g：3–7oz 小杯、试饮杯</li>
+          <li>248–268g：9 / 9.5oz 广告杯主力</li>
+          <li>300g：12–22oz 奶茶杯标配</li>
+          <li>320–350g：大容量、高端定制</li>
+        </ul>
+        <p>克重直接决定纸钱：每只纸钱 = 面积 × 克重 × 纸价。268g 提到 300g，纸钱约多 12%。</p>
+
+        <h2 id="k4">04 淋膜与食品安全</h2>
+        <p>主流是 PE 淋膜：<b>单淋膜</b>只在内壁，常规冷热饮够用；<b>双淋膜</b>内外两面，防潮更好，适合冰饮和外壁结露；<b>PLA 淋膜</b>可降解，耐温约 90℃，成本高 30–100%；<b>水性涂层</b>无塑化剂、可回收，成本最高。</p>
+        <p>合规底线：食品接触执行 <b>GB 4806.8-2022</b>，产品标准 <b>GB/T 27590-2022</b>。客户要质检报告时这两份是必备项。</p>
+
+        <h2 id="k5">05 印刷与后道工艺</h2>
+        <table class="kb-t">
+          <thead><tr><th>工艺</th><th>效果</th><th>成本特征</th></tr></thead>
+          <tbody>
+            <tr><td>胶印四色</td><td>图案细腻</td><td>按色数计版费，通常含在杯价</td></tr>
+            <tr><td>烫金 / 烫银</td><td>金属光泽</td><td>按烫印面积 + 版费 200–400 元/色</td></tr>
+            <tr><td>压纹 / 液压</td><td>凹凸纹理</td><td>需压纹版，深压会降低强度</td></tr>
+            <tr><td>UV 上光</td><td>局部高亮</td><td>按面积，浅色易黄变</td></tr>
+            <tr><td>覆膜亮/哑</td><td>整面保护</td><td>按面积，无版费</td></tr>
+            <tr><td>击凸</td><td>立体凸起</td><td>凹凸版两块 + 工费，常配烫金</td></tr>
+            <tr><td>镭射膜</td><td>彩虹反光</td><td>材料费高，小批量不划算</td></tr>
+            <tr><td>金箔/铝箔内衬</td><td>杯内金属反光</td><td>复合材料按只加价</td></tr>
+          </tbody>
+        </table>
+        <p>版费是一次性费用，跟数量无关；返单版还在通常可免或减半。单列还是摊入单价，客户感受完全不同。</p>
+
+        <h2 id="k6">06 成本与报价构成</h2>
+        <ul>
+          <li><b>原纸</b>：面积 × 克重 × 纸价，占 35–50%</li>
+          <li><b>淋膜</b>：PE 克重 × 面积 × PE 价，占 8–15%</li>
+          <li><b>印刷</b>：油墨 + 版费 + 开机损耗</li>
+          <li><b>成型</b>：杯身、杯底、卷口，含电费人工</li>
+          <li><b>后道</b>：烫金、压纹、UV、覆膜、贴标</li>
+          <li><b>包装物流</b>：内袋 + 纸箱 + 运费</li>
+          <li><b>损耗</b>：常规 1–3%，小批量更高</li>
+          <li><b>管理 + 利润 + 税</b>：管理 3–6%，毛利 8–30%，增值税 13%</li>
+        </ul>
+        <p><b>毛利率 ≠ 加价率。</b>毛利率按售价算：单价 = 成本 ÷ (1 − 毛利率)。成本 0.06 想赚 15% 毛利，售价是 0.0706，不是 0.069。</p>
+
+        <h2 id="k7">07 箱规与物流</h2>
+        <p>纸杯是泡货，体积重常大于实重，运费按立方算更准。3–7oz 约 2千–1万只/箱；9–9.5oz 约 1千–5千只/箱；12–22oz 约 1千–2.5千只/箱。中空和瓦楞杯杯身更粗，同数量箱规明显更大，运费务必按实际箱规算。</p>
+        <p>报价单写清「含运费 / 不含运费 / 偏远另议」，能省掉后期大半扯皮。</p>
+
+        <h2 id="k8">08 常见坑位</h2>
+        <ul>
+          <li>只报盎司不报尺寸 —— 同 oz 不同模具会溢杯或显空</li>
+          <li>把中空当双层报价 —— 成本差一大截</li>
+          <li>漏算版费 —— 小批量版费可能比货值高</li>
+          <li>没算损耗 —— 小单按 3–5% 更稳</li>
+          <li>杯盖吸管漏报 —— 盖子和杯子分开计价</li>
+          <li>含税不含税没说清 —— 13% 足以吃掉全部利润</li>
+          <li>毛利率算成加价率 —— 报低了还以为赚了</li>
+          <li>交期承诺太满 —— 常规 7–10 天，加急加价</li>
+        </ul>
+
+        <h2 id="k9">09 标准与合规</h2>
+        <ul>
+          <li><b>GB/T 27590-2022《纸杯》</b>：产品标准，2023-02-01 实施</li>
+          <li><b>GB 4806.8-2022</b>：食品接触用纸和纸板材料及制品，2023-06-30 实施</li>
+          <li><b>GB 4806.1-2016</b>：食品接触材料通用安全要求</li>
+          <li>感官：无异味异物，油墨不得直接接触食品面</li>
+          <li>出口另需 FDA（美）/ LFGB（德）等文件</li>
+        </ul>
+        <p class="dim src">来源：GB/T 27590-2022、GB 4806.8-2022；纸杯行业公开资料；鼎龙2023价格表、业务员2025-10-18报价表、温州揽胜报价表。</p>
+      </article>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<!-- 添加杯型弹窗 -->
+<div class="modal-mask" id="specModal">
+  <div class="modal" style="width:400px">
+    <div class="modal-head">
+      <h3>添加杯型</h3>
+      <button class="modal-x" id="btnSpecClose">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="mf"><label>杯型名称</label><input type="text" id="spName" placeholder="如 10盎司广告杯"></div>
+      <div class="mf2">
+        <div class="mf"><label>容量 oz</label><input type="number" id="spOz" value="9" step="0.5"></div>
+        <div class="mf"><label>容量 ml</label><input type="number" id="spMl" value="250" step="10"></div>
+      </div>
+      <div class="mf2">
+        <div class="mf"><label>纸张克重 g</label><input type="number" id="spW" value="268" step="1"></div>
+        <div class="mf"><label>所属分组</label><select id="spGroup"></select></div>
+      </div>
+      <div class="mf3">
+        <div class="mf"><label>上口 mm</label><input type="number" id="spTop" value="75"></div>
+        <div class="mf"><label>下口 mm</label><input type="number" id="spBottom" value="53"></div>
+        <div class="mf"><label>高 mm</label><input type="number" id="spHeight" value="88"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-ghost" id="btnSpecCancel">取消</button>
+      <button class="btn" id="btnSpecOk">添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导出合同：确认弹窗 -->
+<div class="modal-mask" id="contractModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>导出合同前确认</h3>
+      <button class="modal-x" id="btnModalClose">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-tip">以下两项会写入合同的第四条（交付）和第五条（付款）。</p>
+
+      <div class="modal-field">
+        <label>合同标题</label>
+        <input type="text" id="mTitle" placeholder="纸杯定作合同">
+      </div>
+
+      <div class="modal-field">
+        <label>发货时间</label>
+        <div class="modal-lead">
+          <div class="modal-lead-val">
+            <input type="number" id="mLeadDays" min="1" step="1" value="7">
+            <span>天</span>
+          </div>
+          <div class="modal-lead-pick" id="mLeadQuick"></div>
+        </div>
+        <div class="modal-hint" id="mLeadHint"></div>
+      </div>
+
+      <div class="modal-field">
+        <label>付款方式</label>
+        <div class="pay-2col">
+          <label class="pay-sel"><span>结算渠道</span>
+            <select id="mPayMethod">
+              <option value="对公转账">对公转账</option>
+              <option value="微信电商下单">微信电商下单</option>
+              <option value="支付宝">支付宝</option>
+              <option value="银行卡转账">银行卡转账</option>
+            </select>
+          </label>
+          <label class="pay-sel"><span>付款节奏</span>
+            <select id="mPayStage">
+              <option value="预付 30%，余款发货前结清">预付 30%，余款发货前结清</option>
+              <option value="预付 50%，余款发货前结清">预付 50%，余款发货前结清</option>
+              <option value="全款到账后发货">全款到账后发货</option>
+              <option value="货到付款">货到付款</option>
+              <option value="月结 30 天">月结 30 天</option>
+              <option value="月结 60 天">月结 60 天</option>
+            </select>
+          </label>
+        </div>
+        <input type="text" id="mPayText" placeholder="最终写入合同的付款条款">
+        <div class="modal-hint">上面两项会自动拼成条款，也可直接改下面的文字</div>
+      </div>
+
+      <div class="modal-sum">
+        <span>合同金额</span>
+        <b id="mTotal">¥0.00</b>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-ghost" id="btnModalCancel">取消</button>
+      <button class="btn" id="btnModalOk">确认导出</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/data.js"></script>
+<script src="assets/docx.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
