@@ -146,6 +146,18 @@ python -m http.server 8080
 
 ---
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [使用说明.md](使用说明.md) | 完整功能说明、每个页面的用法 |
+| [部署说明.md](部署说明.md) | Docker 构建、GitHub Actions、服务器部署 |
+| [更新说明.md](更新说明.md) | 如何更新、回滚、数据兼容性 |
+| [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么 |
+| [VERSION.md](VERSION.md) | 当前版本号、兼容性说明 |
+
+---
+
 ## 部署
 
 ### Docker

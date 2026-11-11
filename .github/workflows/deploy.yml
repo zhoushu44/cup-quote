@@ -1,6 +1,8 @@
 # ============================================================
 # 纸杯报价系统 · GitHub Actions
-# push 到 main / master → 构建镜像 → 推送 Docker Hub
+# push 到 main / master → 构建镜像 → 同时打 1.0 和 latest → 推送 Docker Hub
+#
+# ⚠️ 全部推送由 Actions 完成，本地不需要 docker push
 # ============================================================
 name: Build and Push to Docker Hub
 
@@ -18,15 +20,16 @@ on:
   workflow_dispatch:
 
 env:
+  # 版本号：改这里 → 镜像自动打上新版本标签
   APP_VERSION: "1.0"
   IMAGE_NAME: paper-cup-quote
 
 jobs:
   # ==========================================================
-  # 1. 构建并推送镜像到 Docker Hub
+  # 构建并推送镜像
   # ==========================================================
   build-and-push:
-    name: Build & Push
+    name: Build & Push (1.0 + latest)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,7 +41,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # PR 只构建不推送，避免污染仓库
+      # PR 不推送，避免污染镜像库
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -46,32 +49,55 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=${{ env.APP_VERSION }}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=sha,prefix=sha-,format=short
+      # ---- 关键：同一个镜像打两个标签 ----
+      #   <username>/paper-cup-quote:1.0
+      #   <username>/paper-cup-quote:latest
+      - name: Prepare image tags
+        id: tags
+        run: |
+          IMAGE="${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+          echo "list<<EOF" >> $GITHUB_OUTPUT
+          echo "${IMAGE}:${{ env.APP_VERSION }}" >> $GITHUB_OUTPUT
+          echo "${IMAGE}:latest" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "本次将推送以下标签："
+          echo "  ${IMAGE}:${{ env.APP_VERSION }}"
+          echo "  ${IMAGE}:latest"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.APP_VERSION }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.title=Paper Cup Quotation System
+            org.opencontainers.image.version=${{ env.APP_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           build-args: |
             APP_VERSION=${{ env.APP_VERSION }}
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Image digest
-        run: echo "镜像已推送 → ${{ steps.meta.outputs.tags }}"
+      # ---- 推送结果汇总 ----
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "## 镜像已推送 ✅"
+            echo ""
+            echo "| 标签 | 地址 |"
+            echo "|---|---|"
+            echo "| 版本 | \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.APP_VERSION }}\` |"
+            echo "| 最新 | \`${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest\` |"
+            echo ""
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo ""
+            echo "两个标签指向**同一个镜像层**，不会重复占空间。"
+          } >> $GITHUB_STEP_SUMMARY
