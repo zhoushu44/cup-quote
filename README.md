@@ -249,7 +249,7 @@ docker compose up -d --build
 ## 目录结构
 
 ```
-paper-cup-quotation-system/
+cup-quote/
 ├── index.html              # 主页面（三个 Tab：报价 / 成本 / 快递）
 ├── assets/
 │   ├── data.js             # 杯型、材质、工艺、快递等基础数据

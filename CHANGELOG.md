@@ -159,5 +159,5 @@
 
 ---
 
-[1.1.0]: https://github.com/zhoushu44/paper-cup-quotation-system/releases/tag/v1.1.0
-[1.0.0]: https://github.com/zhoushu44/paper-cup-quotation-system/releases/tag/v1.0.0
+[1.1.0]: https://github.com/zhoushu44/cup-quote/releases/tag/v1.1.0
+[1.0.0]: https://github.com/zhoushu44/cup-quote/releases/tag/v1.0.0
