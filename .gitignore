@@ -29,3 +29,8 @@ build/
 *.key
 id_rsa*
 secrets.*
+
+# 本地部署脚本（含密码，不入库）
+deploy/local/
+plink.exe
+

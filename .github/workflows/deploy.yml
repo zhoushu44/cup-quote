@@ -21,7 +21,7 @@ on:
 
 env:
   # 版本号：改这里 → 镜像自动打上新版本标签
-  APP_VERSION: "1.0"
+  APP_VERSION: "1.2"
   IMAGE_NAME: paper-cup-quote
 
 jobs:

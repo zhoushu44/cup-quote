@@ -7,7 +7,7 @@ FROM nginx:1.27-alpine
 
 LABEL org.opencontainers.image.title="Paper Cup Quotation System" \
       org.opencontainers.image.description="纸杯报价系统 - 成本核算 / 报价单 / 合同导出" \
-      org.opencontainers.image.version="1.0" \
+      org.opencontainers.image.version="1.2" \
       org.opencontainers.image.licenses="MIT"
 
 # 时区（日志时间与国内一致）
@@ -24,7 +24,7 @@ COPY assets/    /usr/share/nginx/html/assets/
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 
 # 版本标记，可通过 /version.txt 查看
-ARG APP_VERSION=1.0
+ARG APP_VERSION=1.2
 RUN echo "${APP_VERSION}" > /usr/share/nginx/html/version.txt
 
 # 确保 nginx 以非 root 用户可写临时目录（alpine 镜像默认已处理，这里显式声明）

@@ -1,10 +1,9 @@
 /* ============================================================
-   纸杯报价 · 简约版
-   成本 = 数量梯度表（杯型 × 数量 → 单只成本）
-        + 结构加价 + 淋膜加价
-        + 材质加价（按层累计：内外都双金 = 加两次）
-        + 克重加价（按层）
-        + 工艺加价（同样按数量梯度）
+   纸杯报价 · 纸价核算版
+   单只成本 = 纸（吨价 × 纸张规格 ÷ (拼版 × 损耗)，按层累计，单层/双层由纸杯表决定）
+            + 加工费（成型 + 印刷，按数量梯度插值）
+            + 工艺费（按数量梯度）
+   注：买来的纸本身就是淋膜纸，PE 涂膜含在纸价里，不再单独计淋膜
    报价 = 成本 ÷ (1 − 毛利率) × (1 + 税率)
    对客户只展示一个价（默认标准价）
    ============================================================ */
@@ -30,11 +29,8 @@
   function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function toast(m) { var t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove('on'); }, 1800); }
-
   var state = {
     specId: 'ad-9-268',
-    structure: 'single',
-    papers: [{ material: 'cupstock', weight: 268 }, { material: 'cupstock', weight: 248 }],
     lining: 'single',
     qty: 10000,
     crafts: [],
@@ -64,54 +60,32 @@
     },
     shipMode: 'auto',        // auto = 按梯度表取；manual = 手工填
     gradients: D.anchors.slice(),
-    grid: {},                // specId -> [每档成本]
+    paper: JSON.parse(JSON.stringify(D.paper || {})),   // 工艺参数：默认损耗 / 卷边 / 杯底余量 / PE
+    paperStock: JSON.parse(JSON.stringify(D.paperStock || [])),  // 纸库（长宽 / 克重 / 吨价，可增删改）
+    cupPaper: {},           // specId -> { structure, layers:[{paperId, pack, loss}] }
+    proc: { make: [], print: [] },  // 加工费梯度（元/只，与 gradients 一一对应）
     craftGrid: {},           // craftId -> [每档加价]
-    addon: {
-      struct: { single: 0, double: 0.055, corrugated: 0.065, outer: 0.016 },
-      lining: { none: 0, single: 0, double: 0.020 },
-      material: { cupstock: 0, white: 0.004, kraft: -0.004, coated: 0.002, gold: 0.10, silver: 0.09, corr: 0.030 },
-      weight: 0.013          // 每 100g 每层
-    },
+    addon: {},               // 历史字段，已不用（结构工费随选纸自动计）
     params: JSON.parse(JSON.stringify(D.params)),
     lead: JSON.parse(JSON.stringify(D.leadTime)),
     ocrText: ''
   };
 
-  /* ---------------- 参考成本（仅首次填充） ---------------- */
-  function areaOf(sp) {
-    var r1 = sp.top / 2000, r2 = sp.bottom / 2000, h = sp.height / 1000;
-    var slant = Math.sqrt(h * h + (r1 - r2) * (r1 - r2));
-    return Math.PI * (r1 + r2) * slant * 1.06 * 1.08;
-  }
-
-  /* 单杯克重（克）：各层纸张 + 淋膜 + 杯底
-     areaOf 返回单层展开面积（m²，已含 6% 卷边 / 8% 损耗） */
-  function cupGram(sp, structure, papers, liningId) {
-    var a = areaOf(sp);                        // m²
-    var st = D.structures.filter(function (x) { return x.id === structure; })[0] || { layers: 1 };
-    var layers = st.layers || 1;
-    var g = 0;
-    for (var i = 0; i < layers; i++) {
-      var cfg = (papers || [])[i] || (papers || [])[0] || {};
-      var w = num(cfg.weight) || sp.defW;
-      g += a * w;                              // a(m²) × w(g/m²) = 克
-    }
-    // 淋膜：PE 膜约 18g/m²，双淋膜按面数
-    var ln = (D.linings || []).filter(function (x) { return x.id === liningId; })[0] || { sides: 1 };
-    g += a * 18 * (num(ln.sides) || 0);
-    // 杯底片：半径≈下口，另加一片
-    var r2 = sp.bottom / 2000;
-    g += Math.PI * r2 * r2 * sp.defW * 1.15;
-    return Math.round(g * 10) / 10;
-  }
-  /* 单杯克重：纯手动输入，未填返回 0（不再自动估算） */
+  /* 单杯克重：手填实测优先，没填就用纸杯表自动算 */
   function gramOf(sp) {
     return num((state.wt || {})[sp.id]) || 0;
   }
+  /* 自动克重（按纸杯表算） */
+  function autoGram(sp) {
+    var g = cupPaperCalc(sp).gram;
+    return Math.round(g * 10) / 10;
+  }
 
-  /* 当前杯型的单杯克重（手动值；未填返回 0） */
+  /* 当前杯型的单杯克重 */
   function curGram() {
-    return gramOf(spec());
+    var sp = spec();
+    var manual = gramOf(sp);
+    return manual > 0 ? manual : autoGram(sp);
   }
 
   /* 单个箱规 → 文本 */
@@ -165,11 +139,194 @@
     return rows[0] || { per: 0, l: 0, w: 0, h: 0 };
   }
 
-  function suggestCost(sp, qty) {
-    var a = areaOf(sp);
-    var paper = a * (sp.defW / 1000) * (6800 / 1000);
-    var proc = 0.008 + 0.004 + 0.002 + (20 / Math.max(1, qty));
-    return Math.round((paper + proc) * 100000) / 100000;
+  /* ============================================================
+     纸成本引擎：吨价 × 纸张规格 ÷ (拼版 × 损耗)
+     ============================================================ */
+
+  /* 纸张参数（带默认值兜底，避免用户清空输入框后除零） */
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+  function paperCfg() {
+    var p = state.paper || {};
+    return {
+      lossDefault: p.lossDefault == null ? 8 : clamp(num(p.lossDefault), 0, 90),
+      // 卷边系数与杯底余量固定（不再做成可调参数）
+      flange: 1.06,   // 扇片宽 = 上口周长 × 1.06
+      botMargin: 4    // 杯底圆片直径 = 下口 + 4mm
+    };
+  }
+
+  /* 杯身扇片展开尺寸 mm：宽 = 上口周长 × 卷边；高 = 斜高 */
+  function fanBlank(sp, cfg) {
+    cfg = cfg || paperCfg();
+    var r1 = sp.top / 2, r2 = sp.bottom / 2, h = sp.height;
+    var slant = Math.sqrt(h * h + (r1 - r2) * (r1 - r2));
+    return { w: Math.PI * sp.top * cfg.flange, h: slant };
+  }
+
+  /* 扇片净面积 m²（真实扇形面积 + 卷边，不含损耗） */
+  function fanArea(sp, cfg) {
+    cfg = cfg || paperCfg();
+    var r1 = sp.top / 2000, r2 = sp.bottom / 2000, h = sp.height / 1000;
+    var slant = Math.sqrt(h * h + (r1 - r2) * (r1 - r2));
+    return Math.PI * (r1 + r2) * slant * cfg.flange;
+  }
+
+  /* 一张纸能排多少片扇片：方排，两向取优（用该纸自己的长宽） */
+  function autoPack(sp, paper, cfg) {
+    cfg = cfg || paperCfg();
+    var fan = fanBlank(sp, cfg);
+    var L = num(paper && paper.len) || 787, W = num(paper && paper.wid) || 1092;
+    if (!(fan.w > 0) || !(fan.h > 0)) return 0;
+    var a = Math.floor(L / fan.w) * Math.floor(W / fan.h);
+    var b = Math.floor(L / fan.h) * Math.floor(W / fan.w);
+    return Math.max(a, b);
+  }
+
+  /* 杯底圆片直径 mm */
+  function discDia(sp, cfg) { return sp.bottom + (cfg || paperCfg()).botMargin; }
+
+  /* 纸库里的某张纸 */
+  function paperById(id) {
+    var list = state.paperStock || [];
+    return list.filter(function (p) { return p.id === id; })[0] || list[0] ||
+      { id: 'cupstock', name: '杯纸', len: 787, wid: 1092, gsm: 268, price: 6800 };
+  }
+
+  /* 结构 */
+  function structOf(id) {
+    return (D.structures || []).filter(function (s) { return s.id === id; })[0] || D.structures[0];
+  }
+
+  /* 某个杯型默认用哪种结构 */
+  function defaultStructId(sp) {
+    var g = sp.group || '';
+    if (g.indexOf('中空') >= 0) return 'double';
+    if (g.indexOf('金箔') >= 0) return 'double';   // 金箔铝箔组全是「中空铝箔杯」
+    if (g.indexOf('外贴') >= 0) return 'outer';
+    return 'single';
+  }
+  /* 在某材质族里挑克重最接近的一张纸 */
+  function paperInBase(base, wantGsm) {
+    var pool = (state.paperStock || []).filter(function (p) { return (p.base || p.id) === base; });
+    if (!pool.length) return null;
+    var best = null;
+    pool.forEach(function (p) {
+      if (!best) best = p;
+      else if (Math.abs(num(p.gsm) - wantGsm) < Math.abs(num(best.gsm) - wantGsm)) best = p;
+    });
+    return best;
+  }
+  /* 某个杯型默认用哪种纸：按材质族 + 该杯型常用克重（分层：内杯 / 外杯不同族） */
+  function defaultPaperId(sp, layerIdx, structId) {
+    var g = sp.group || '';
+    var base = 'cupstock';
+    if (g.indexOf('金箔') >= 0) base = 'gold';
+    else if (g.indexOf('银箔') >= 0) base = 'silver';
+    else if (g.indexOf('瓦楞') >= 0) base = 'corr';
+    else if (g.indexOf('纸桶') >= 0 || g.indexOf('纸碗') >= 0) base = 'kraft';
+    var want = num(sp.defW) || 268;
+    var st = structId || defaultStructId(sp);
+    var idx = layerIdx || 0;
+    // 外层：外贴=银箔贴纸、瓦楞=瓦楞纸、金箔杯外层=白卡
+    if (idx > 0) {
+      if (st === 'outer') base = 'silver';
+      else if (st === 'corrugated') base = 'corr';
+      else if (base === 'gold') base = 'white';
+    } else if (base === 'silver') {
+      base = 'cupstock';   // 外贴/银箔杯的内层是普通杯纸
+    }
+    var p = paperInBase(base, want) || paperInBase('cupstock', want) || (state.paperStock || [])[0];
+    return p ? p.id : 'cupstock-268';
+  }
+
+  /* 某杯型的纸杯配置：结构 + 每层（纸 / 拼版 / 损耗） */
+  function cupCfg(sp) {
+    var c = (state.cupPaper || {})[sp.id];
+    if (!c) { c = defaultCupCfg(sp); (state.cupPaper || {})[sp.id] = c; }
+    if (!c.layers) c.layers = [];
+    if (!c.stash) c.stash = [];
+    var st = structOf(c.structure);
+    var n = st.layers || 1;
+    var cfg = paperCfg();
+    while (c.layers.length < n) {
+      // 切回双层时优先用之前那层的拼版/损耗
+      var src = c.stash[c.layers.length] || {};
+      c.layers.push({
+        paperId: src.paperId || defaultPaperId(sp, c.layers.length, c.structure),
+        pack: src.pack != null ? src.pack : 0,
+        loss: src.loss != null ? src.loss : cfg.lossDefault
+      });
+    }
+    if (c.layers.length > n) {
+      // 收起的层先存起来，切回去还能用
+      for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
+      c.layers.length = n;
+    }
+    return c;
+  }
+  /* 默认配置：拼版留 0 = 按纸长宽自动算 */
+  function defaultCupCfg(sp) {
+    var cfg = paperCfg();
+    var sid = defaultStructId(sp);
+    var st = structOf(sid);
+    var layers = [];
+    for (var i = 0; i < (st.layers || 1); i++) {
+      layers.push({ paperId: defaultPaperId(sp, i, sid), pack: 0, loss: cfg.lossDefault });
+    }
+    return { structure: sid, layers: layers, stash: [] };
+  }
+
+  /* 一只杯的纸成本与重量
+     杯身扇片：整张纸钱 ÷ (拼版数 × (1 − 损耗%))
+     杯底圆片：卷筒纸切圆片，不排版 → 净面积 × 克重 × 吨价 ÷ (1 − 损耗%)（切圆片的损耗） */
+  function cupPaperCalc(sp, cfg) {
+    cfg = cfg || paperCfg();
+    var cc = cupCfg(sp);
+    var layers = [], cost = 0, gram = 0, noFit = false;
+    for (var i = 0; i < cc.layers.length; i++) {
+      var L = cc.layers[i] || {};
+      var p = paperById(L.paperId);
+      var gsm = num(p.gsm) || 268;
+      var loss = clamp(num(L.loss), 0, 90) / 100;
+      var pack = num(L.pack) > 0 ? Math.round(num(L.pack)) : autoPack(sp, p, cfg);
+      var eff = pack > 0 ? Math.max(0.05, pack * (1 - loss)) : 0;
+      if (pack <= 0) noFit = true;
+      var sheetArea = (num(p.len) || 787) / 1000 * (num(p.wid) || 1092) / 1000;
+      var sheetGram = sheetArea * gsm;                                  // 一张纸多少克
+      var sheetCost = sheetArea * gsm / 1000 * (num(p.price) || 0) / 1000;  // 一张纸多少钱
+      var row = {
+        i: i, name: i === 0 ? '内杯' : '外杯', paper: p, gsm: gsm, price: num(p.price) || 0,
+        loss: loss * 100, pack: pack, eff: eff,
+        bodyGram: fanArea(sp, cfg) * gsm,      // 杯身净重（进到杯子里的纸）
+        bodyCost: eff > 0 ? sheetCost / eff : 0,   // 杯身纸成本（按整张纸摊，含损耗与排版浪费）；放不下时不算
+        sheetGram: sheetGram, sheetCost: sheetCost
+      };
+      if (i === 0) {
+        // 杯底：卷筒纸切圆片，按净面积计
+        var d = discDia(sp, cfg);
+        var area = Math.PI * Math.pow(d / 2000, 2);
+        row.bottomDia = d;
+        row.bottomArea = area;
+        row.bottomGram = area * gsm;
+        row.bottomCost = area * gsm / 1000 * (num(p.price) || 0) / 1000 / Math.max(0.05, 1 - loss);
+      }
+      layers.push(row);
+      cost += row.bodyCost + (row.bottomCost || 0);
+      gram += row.bodyGram + (row.bottomGram || 0);
+    }
+    return { cfg: cfg, structure: cc.structure, layers: layers, cost: cost, gram: gram, noFit: noFit };
+  }
+
+  /* 加工费：成型 / 印刷 各自按数量梯度对数插值 */
+  function procCost(item, qty) { return interp((state.proc || {})[item] || [], qty); }
+  function procCostAll(qty) { return procCost('make', qty) + procCost('print', qty); }
+
+  /* 加工费默认值（元/只）：固定工费 + 开机损耗摊销 */
+  function suggestProc(item, qty) {
+    var q = Math.max(1, num(qty));
+    var v = item === 'print' ? 0.006 + 25 / q : 0.010 + 8 / q;
+    return Math.round(v * 100000) / 100000;
   }
 
   function initData() {
@@ -200,26 +357,48 @@
         state.craftGrid[c.id].push(Math.round(lastV * 0.95 * 100000) / 100000);
       }
     });
-    D.specs.forEach(function (s) {
-      if (!state.grid[s.id]) state.grid[s.id] = state.gradients.map(function (g) { return suggestCost(s, g); });
-      while (state.grid[s.id].length < state.gradients.length) {
-        state.grid[s.id].push(suggestCost(s, state.gradients[state.grid[s.id].length]));
+    // 工艺参数：旧存档没有该字段时补默认值
+    state.paper = Object.assign(JSON.parse(JSON.stringify(D.paper || {})), state.paper || {});
+    state.paper.pe = Object.assign({ price: 9800, gsm: 18 }, state.paper.pe || {});
+    if (state.paper.lossDefault == null) state.paper.lossDefault = 8;
+    // 纸库：没有就用 data.js 模板
+    if (!state.paperStock || !state.paperStock.length) {
+      state.paperStock = JSON.parse(JSON.stringify(D.paperStock || []));
+    }
+    state.paperStock = state.paperStock.map(function (p) {
+      return {
+        id: p.id || ('p' + Math.random().toString(36).slice(2, 8)),
+        base: p.base != null ? p.base : (p.id || ''),
+        name: p.name || '未命名',
+        len: num(p.len) || 787, wid: num(p.wid) || 1092,
+        gsm: num(p.gsm) || 268, price: num(p.price) || 0, desc: p.desc || ''
+      };
+    });
+    // 纸杯配置（每个杯型一套）
+    if (!state.cupPaper) state.cupPaper = {};
+    if (!state.addon) state.addon = {};
+
+    // 加工费梯度：首次填充默认值，之后以用户填写为准
+    ['make', 'print'].forEach(function (k) {
+      if (!state.proc[k]) state.proc[k] = [];
+      while (state.proc[k].length < state.gradients.length) {
+        state.proc[k].push(suggestProc(k, state.gradients[state.proc[k].length]));
       }
     });
-    // 兼容旧版「中空」结构
-    if (state.structure === 'hollow') state.structure = 'double';
-    if (!state.addon.struct.double) state.addon.struct.double = 0.055;
-    if (state.addon.struct.hollow != null) delete state.addon.struct.hollow;
+
+    // 旧版「结构附加工费」已废弃（单层/双层由纸杯表选纸决定），加载后清掉
+    if (state.addon.struct) delete state.addon.struct;
   }
 
   /* ---------------- 存取 ---------------- */
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
-        specId: state.specId, structure: state.structure, papers: state.papers,
+        specId: state.specId, cupPaper: state.cupPaper,
         lining: state.lining, qty: state.qty, crafts: state.crafts,
         plateAmort: state.plateAmort, urgent: state.urgent, quoteTier: state.quoteTier,
-        quote: state.quote, gradients: state.gradients, grid: state.grid,
+        quote: state.quote, gradients: state.gradients,
+        paper: state.paper, paperStock: state.paperStock, proc: state.proc,
         craftGrid: state.craftGrid, addon: state.addon, lead: state.lead,
         shipGrid: state.shipGrid, wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, customSpecs: state.customSpecs, customCrafts: state.customCrafts, specOrder: state.specOrder, craftOrder: state.craftOrder,
         invoice: state.invoice, shipping: state.shipping, freightPay: state.freightPay,
@@ -236,7 +415,7 @@
     if (!raw) return;
     try {
       var o = JSON.parse(raw);
-      ['specId', 'structure', 'papers', 'lining', 'qty', 'crafts', 'ocrText'].forEach(function (k) {
+      ['specId', 'lining', 'qty', 'crafts', 'ocrText'].forEach(function (k) {
         if (o[k] != null) state[k] = o[k];
       });
       ['plateAmort', 'urgent'].forEach(function (k) { if (typeof o[k] === 'boolean') state[k] = o[k]; });
@@ -246,7 +425,10 @@
       if (typeof o.quoteTier === 'number') state.quoteTier = o.quoteTier;
       if (o.quote) Object.assign(state.quote, o.quote);
       if (o.gradients && o.gradients.length) state.gradients = o.gradients;
-      if (o.grid) state.grid = o.grid;
+      if (o.paper) state.paper = o.paper;
+      if (o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
+      if (o.cupPaper) state.cupPaper = o.cupPaper;
+      if (o.proc) state.proc = o.proc;
       if (o.craftGrid) state.craftGrid = o.craftGrid;
       if (o.shipGrid) state.shipGrid = o.shipGrid;
       if (o.wt) state.wt = o.wt;
@@ -257,16 +439,58 @@
       if (o.customCrafts) state.customCrafts = o.customCrafts;
       if (o.boxCfg) state.boxCfg = o.boxCfg;
       if (o.addon) state.addon = Object.assign(state.addon, o.addon);
+      // 旧存档里已废弃的加价字段（含结构工费），加载后清掉
+      ['material', 'weight', 'lining', 'struct'].forEach(function (k) { delete state.addon[k]; });
+      // 旧存档迁移：结构 + 每层材质/克重 → 纸杯配置
+      if (!o.cupPaper && (o.structure || o.papers)) {
+        var oldStruct = o.structure === 'hollow' ? 'double' : (o.structure || '');
+        if (oldStruct && structOf(oldStruct).id !== oldStruct) oldStruct = '';
+        var oldPapers = o.papers || {};
+        var curId = o.specId || state.specId;
+        state.cupPaper = {};
+        allSpecs().forEach(function (s) {
+          // 旧「结构」只是当时这一单的结构，只套到当时的杯型；其它杯型用分组默认
+          var sid = defaultStructId(s);
+          if (s.id === curId && oldStruct) sid = oldStruct;
+          var st = structOf(sid);
+          // 旧 papers 可能是数组，也可能是按杯型 id 存的
+          var ps = (oldPapers.length != null) ? oldPapers : (oldPapers[s.id] || []);
+          var layers = [];
+          for (var i = 0; i < (st.layers || 1); i++) {
+            var op = ps[i] || ps[0] || {};
+            var pid = defaultPaperId(s, i, sid);
+            // 旧存档里有「材质 + 克重」时，尽量对上纸库里同一张纸
+            if (op.material || op.weight) {
+              var ob = op.material || '';
+              var og = num(op.weight) || 0;
+              var hit = (state.paperStock || []).filter(function (p) {
+                return (p.base || p.id) === ob && (!og || num(p.gsm) === og);
+              })[0];
+              if (hit) pid = hit.id;
+            }
+            // 旧存档的损耗可能是系数（0.89 = 损耗 11%）或已是百分数
+            var ol = num(state.paper.lossDefault);
+            if (!ol) ol = 8;
+            else if (ol > 0 && ol <= 1) ol = Math.round((1 - ol) * 1000) / 10;
+            layers.push({ paperId: pid, pack: 0, loss: ol });
+          }
+          state.cupPaper[s.id] = { structure: sid, layers: layers, stash: [] };
+        });
+      }
       if (o.lead) state.lead = Object.assign(state.lead, o.lead);
       if (o.params) Object.assign(state.params, o.params);
     } catch (e) {}
   }
 
   /* ---------------- 取值 ---------------- */
-  function spec() { return D.specs.filter(function (s) { return s.id === state.specId; })[0] || D.specs[0]; }
-  function struct() { return D.structures.filter(function (s) { return s.id === state.structure; })[0] || D.structures[0]; }
-  function mat(id) { return D.materials.filter(function (m) { return m.id === id; })[0] || D.materials[0]; }
-  function lining() { return D.linings.filter(function (l) { return l.id === state.lining; })[0] || D.linings[1]; }
+  /* 当前杯型（标准 + 自定义） */
+  function spec() { return allSpecs().filter(function (s) { return s.id === state.specId; })[0] || D.specs[0]; }
+  /* 任意杯型（含自定义）；找不到返回 undefined（见下方 specById） */
+  /* 当前杯型的结构 id（来自纸杯表） */
+  function curStructId() { return cupCfg(spec()).structure; }
+  function struct() { return structOf(curStructId()); }
+  /* 淋膜：买来的纸本身就是淋膜纸，纸价已含 PE 涂膜 → 不再单独计成本、也不再可选 */
+  function lining() { return { id: 'pe', name: 'PE淋膜（纸价已含）', sides: 0 }; }
 
   /* 对数插值：values 与 state.gradients 一一对应 */
   function interp(values, qty) {
@@ -287,39 +511,36 @@
     return pts[0][1];
   }
 
-  function baseCost(specId, qty) { return interp(state.grid[specId] || [], qty); }
   function craftPrice(id, qty) { return interp(state.craftGrid[id] || [], qty); }
 
-  /* 单只成本（含全部加价） */
+  /* 淋膜成本：买来的纸就是淋膜纸，PE 涂膜含在纸价里 → 不再单独计 */
+  function liningCost() { return 0; }
+
+  /* 单只成本 = 纸（按层累计）+ 加工 + 工艺。
+     单层/双层的纸已按层计入，结构工费不再单列；淋膜含在纸价里。
+     加急费是「按单」计，不进单只成本（见 tiers / buildQuote） */
   function costDetail() {
-    var sp = spec(), st = struct(), ad = state.addon, p = state.params;
-    var d = { base: 0, struct: 0, lining: 0, material: 0, weight: 0, craft: 0, total: 0, layers: [] };
-
-    d.base = baseCost(sp.id, state.qty);
-    d.struct = num(ad.struct[st.id]) || 0;
-    d.lining = num(ad.lining[state.lining]) || 0;
-
-    var n = st.layers;
-    for (var i = 0; i < n; i++) {
-      var cfg = state.papers[i] || state.papers[0];
-      var w = num(cfg.weight);
-      var mAdd = num(ad.material[cfg.material]) || 0;      // 每层各加一次
-      var baseW = i === 0 ? sp.defW : 0;                    // 内层以杯型默认克重为基准，外层全算增量
-      var wAdd = num(ad.weight) * ((w - baseW) / 100);
-
-      d.material += mAdd;
-      d.weight += wAdd;
-      d.layers.push({ i: i, cfg: cfg, mat: mat(cfg.material), mAdd: mAdd, wAdd: wAdd, w: w });
-    }
-
+    var sp = spec();
+    var pd = cupPaperCalc(sp);
+    var d = {
+      paper: pd.cost, lining: 0, proc: procCostAll(state.qty),
+      craft: 0, total: 0, pd: pd, layers: pd.layers
+    };
     state.crafts.forEach(function (id) { d.craft += craftPrice(id, state.qty); });
-
-    d.total = d.base + d.struct + d.lining + d.material + d.weight + d.craft;
-    if (state.urgent) { d.urgentAdd = num(p.urgentFee) || 300; d.total += d.urgentAdd; }
+    d.total = d.paper + d.proc + d.craft;
     return d;
   }
 
   function unitCost() { return costDetail().total; }
+
+  /* 任意杯型的单只成本（纸杯表用） */
+  function cupCost(sp, qty) {
+    var pd = cupPaperCalc(sp);
+    var proc = procCostAll(qty);
+    var craft = 0;
+    state.crafts.forEach(function (id) { craft += craftPrice(id, qty); });
+    return { paper: pd.cost, lining: 0, proc: proc, craft: craft, total: pd.cost + proc + craft, pd: pd };
+  }
   /* 全部工艺 = 自定义 + 内置 */
   function allCrafts() {
     var all = (state.customCrafts || []).concat(D.crafts);
@@ -338,9 +559,9 @@
   }
   function plate() {
     var s = 0;
-    state.crafts.forEach(function (id) {
-      var c = D.crafts.filter(function (x) { return x.id === id; })[0];
-      if (c && c.plate) s += c.plate;
+    (state.crafts || []).forEach(function (id) {
+      var c = allCrafts().filter(function (x) { return x.id === id; })[0];
+      if (c) s += num(c.plate) || 0;
     });
     return s;
   }
@@ -357,12 +578,11 @@
 
   /* ---------------- 发货时间 ---------------- */
   /* 天 = 基准 + 杯型分组 + 结构 + 各工艺 + 克重（取最重一层） */
-  function leadTime(specId, structureId, craftIds, papers) {
+  function leadTime(specId, structureId, craftIds) {
     var L = state.lead || D.leadTime;
-    var sp = D.specs.filter(function (s) { return s.id === (specId || state.specId); })[0] || spec();
-    var st = structureId || state.structure;
+    var sp = specById(specId || state.specId) || spec();
+    var st = structureId || curStructId();
     var cr = craftIds || state.crafts;
-    var pp = papers || state.papers;
 
     var d = num(L.base) || 0;
     var parts = [{ label: '基准', d: num(L.base) || 0 }];
@@ -383,11 +603,20 @@
       var add = num((L.byCraft || {})[id]) || 0;
       if (add) {
         cAdd += add;
-        var c = D.crafts.filter(function (x) { return x.id === id; })[0];
+        var c = allCrafts().filter(function (x) { return x.id === id; })[0];
         cNames.push((c ? c.name : id) + ' +' + add);
       }
     });
     if (cAdd) { d += cAdd; parts.push({ label: cNames.join('、'), d: cAdd }); }
+
+    // 克重：取最重一层
+    var maxG = 0;
+    cupCfg(sp).layers.forEach(function (L) {
+      var g = num((paperById(L.paperId) || {}).gsm);
+      if (g > maxG) maxG = g;
+    });
+    var hAdd = maxG > num(L.heavyGsm || 320) ? (num(L.heavyAdd) || 1) : 0;
+    if (hAdd) { d += hAdd; parts.push({ label: '重纸 ' + maxG + 'g +' + hAdd, d: hAdd }); }
 
     if (state.urgent) {
       d = Math.min(d, num(L.urgentDays) || 3);
@@ -397,8 +626,8 @@
     return { days: Math.max(1, Math.round(d)), parts: parts };
   }
 
-  function leadText(specId, structureId, craftIds, papers) {
-    var r = leadTime(specId, structureId, craftIds, papers);
+  function leadText(specId, structureId, craftIds) {
+    var r = leadTime(specId, structureId, craftIds);
     return r.days + ' 天';
   }
 
@@ -409,6 +638,7 @@
     var per = state.qty > 0 ? plate() / state.qty : 0;
     var cost = uc + per;
     var tr = taxRate();          // 按开票类型取税点
+    var urgentFee = state.urgent ? (num(p.urgentFee) || 0) : 0;   // 加急费按单计
 
     return D.tiers.map(function (t) {
       var price = cost / (1 - Math.min(t.margin, 0.9));
@@ -417,7 +647,8 @@
       price = p.roundUp ? Math.ceil(price / step) * step : Math.round(price / step) * step;
       return {
         name: t.name, margin: t.margin, cost: cost, price: price,
-        amount: price * state.qty,
+        amount: price * state.qty + urgentFee,
+        urgentFee: urgentFee,
         gross: (price - cost * (1 + tr)) * state.qty
       };
     });
@@ -455,16 +686,18 @@
   function renderSummary() {
     var box = $('#cfgSummary');
     if (!box) return;
-    var st = struct(), parts = [];
+    var sp = spec();
+    var cc = cupCfg(sp);
+    var st = structOf(cc.structure), parts = [];
     parts.push('<span>' + st.name + '</span>');
-    for (var i = 0; i < st.layers; i++) {
-      var cfg = state.papers[i] || state.papers[0];
-      parts.push('<span>' + (st.layers > 1 ? (i === 0 ? '内 ' : '外 ') : '') + mat(cfg.material).name + ' ' + cfg.weight + 'g</span>');
-    }
+    cc.layers.forEach(function (L, i) {
+      var p = paperById(L.paperId);
+      parts.push('<span>' + (st.layers > 1 ? (i === 0 ? '内 ' : '外 ') : '') + esc(p.name) + ' ' + (num(p.gsm) || '—') + 'g</span>');
+    });
     parts.push('<span>' + lining().name + '</span>');
     if (state.crafts.length) {
       parts.push('<span class="hi">' + state.crafts.map(function (id) {
-        var c = D.crafts.filter(function (x) { return x.id === id; })[0];
+        var c = allCrafts().filter(function (x) { return x.id === id; })[0];
         return c ? c.name : '';
       }).filter(Boolean).join(' + ') + '</span>');
     }
@@ -485,9 +718,7 @@
   /* 单杯克重 / 箱规 / 总重量 */
   function renderWeightBox() {
     if (!$('#weightBox')) return;
-    var sp = spec(), st = struct();
-    var papers = [];
-    for (var i = 0; i < st.layers; i++) papers.push(state.papers[i] || state.papers[0]);
+    var sp = spec();
 
     var gram = curGram();
     var totalKg = gram * state.qty / 1000;
@@ -520,72 +751,71 @@
   function renderStruct() {
     var box = $('#structureChips');
     box.innerHTML = '';
+    var sp = spec();
+    var cc = cupCfg(sp);
     D.structures.forEach(function (s) {
-      var b = el('button', state.structure === s.id ? 'on' : '', s.name);
+      var b = el('button', cc.structure === s.id ? 'on' : '', s.name);
       b.title = s.desc;
       b.onclick = function () {
-        state.structure = s.id;
-        if (s.layers > 1 && !state.papers[1]) state.papers[1] = { material: 'cupstock', weight: 248 };
-        sync();
+        var sp2 = spec();
+        var c = cupCfg(sp2);
+        c.structure = s.id;
+        var n = s.layers || 1;
+        var cfg = paperCfg();
+        if (!c.stash) c.stash = [];
+        while (c.layers.length < n) {
+          var src = c.stash[c.layers.length] || {};
+          c.layers.push({
+            paperId: src.paperId || defaultPaperId(sp2, c.layers.length, c.structure),
+            pack: src.pack != null ? src.pack : 0,
+            loss: src.loss != null ? src.loss : cfg.lossDefault
+          });
+        }
+        if (c.layers.length > n) {
+          for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
+          c.layers.length = n;
+        }
+        save(); sync();
       };
       box.appendChild(b);
     });
-    var st = struct();
-    $('#structHint').textContent = st.layers > 1 ? '两层纸（内 + 外）' : '一层纸';
-    $('#paperLabel').textContent = st.layers > 1 ? '纸张（内层 / 外层）' : '纸张';
+    var st = structOf(cc.structure);
+    $('#structHint').textContent = st.layers > 1 ? '两层纸（内杯 + 外杯）' : '一层纸';
+    $('#paperLabel').textContent = st.layers > 1 ? '纸张（内杯 / 外杯）' : '纸张';
   }
 
+  /* 报价页的纸张行：只读显示纸杯表配置，改配置去成本页 */
   function renderPapers() {
     var box = $('#paperLayers');
+    if (!box) return;
     box.innerHTML = '';
-    var n = struct().layers;
-    var tags = n === 1 ? ['杯身纸'] : ['内层', '外层'];
-
-    for (var i = 0; i < n; i++) {
-      if (!state.papers[i]) state.papers[i] = { material: 'cupstock', weight: i === 0 ? spec().defW : 248 };
-      var cfg = state.papers[i];
+    var sp = spec();
+    var cc = cupCfg(sp);
+    var st = structOf(cc.structure);
+    cc.layers.forEach(function (L, i) {
+      var p = paperById(L.paperId);
       var row = el('div', 'paper-row');
-
-      row.appendChild(el('span', 'ptag', tags[i]));
-
-      var ms = document.createElement('select');
-      D.materials.forEach(function (m) {
-        var o = document.createElement('option');
-        o.value = m.id;
-        var add = num(state.addon.material[m.id]) || 0;
-        o.textContent = m.name + (add ? '（' + (add > 0 ? '+' : '') + fp(add) + '）' : '');
-        if (m.id === cfg.material) o.selected = true;
-        ms.appendChild(o);
-      });
-
-      var ws = document.createElement('select');
-      ws.className = 'wt';
-      D.weights.forEach(function (w) {
-        var o = document.createElement('option');
-        o.value = w; o.textContent = w + 'g';
-        if (w === cfg.weight) o.selected = true;
-        ws.appendChild(o);
-      });
-
-      // 用 IIFE 固定每层的 cfg 与控件，避免闭包串层
-      (function (cfg, ms, ws, idx) {
-        ms.onchange = function () { state.papers[idx].material = ms.value; sync(); };
-        ws.onchange = function () { state.papers[idx].weight = num(ws.value); sync(); };
-      })(cfg, ms, ws, i);
-
-      row.appendChild(ms);
-      row.appendChild(ws);
+      row.appendChild(el('span', 'ptag', st.layers > 1 ? (i === 0 ? '内杯' : '外杯') : '杯身'));
+      var packN = num(L.pack) > 0 ? num(L.pack) : autoPack(sp, p, paperCfg());
+      row.appendChild(el('span', 'ptxt', p.name + ' ' + (num(p.gsm) || '—') + 'g ｜ 拼版 ' +
+        (packN > 0 ? packN + (num(L.pack) > 0 ? '' : '（自动）') : '放不下') + ' ｜ 损耗 ' + (num(L.loss) || 0) + '%'));
       box.appendChild(row);
-    }
+    });
+    var tip = el('div', 'ptip', '<a href="#" id="lnkCostPaper">去成本页改纸 / 拼版 / 损耗 →</a>');
+    box.appendChild(tip);
+    var a = $('#lnkCostPaper');
+    if (a) a.onclick = function (e) {
+      e.preventDefault();
+      page('cost');
+      var tb = $('.cost-tabs button[data-cost-tab="cup"]');
+      if (tb) tb.click();
+    };
   }
 
+  /* 淋膜：纸价已含 PE 涂膜，这里只显示说明，不再可选、不再单独计成本 */
   function renderLining() {
-    var sel = $('#liningSel');
-    sel.innerHTML = D.linings.map(function (l) {
-      var add = num(state.addon.lining[l.id]) || 0;
-      return '<option value="' + l.id + '">' + l.name + (add ? '（+' + fp(add) + '）' : '') + '</option>';
-    }).join('');
-    sel.value = state.lining;
+    var out = $('#liningOut');
+    if (out) out.value = 'PE 淋膜（纸价已含）';
   }
 
   function renderTiers() {
@@ -609,23 +839,45 @@
       };
     });
     $('#unitCostOut').value = fp(rows[0].cost);
+    var d = costDetail();
+    var urgentTxt = state.urgent ? '　|　加急费 ¥' + fm(num(state.params.urgentFee) || 0) + '/单' : '';
+    var noFitTxt = (d.pd && d.pd.noFit) ? '　|　<span style="color:#c0392b;font-weight:600">⚠ 有纸张拼版放不下，纸成本未计入，请到成本页「纸杯」填拼版</span>' : '';
     $('#tierNote').innerHTML = '<b>' + fq(state.qty) + '</b> 只　|　成本 <b>¥' + fp(rows[0].cost) + '</b>/只　|　' +
-      bracketHint() + '　|　<span style="color:var(--ac)">报价单只给「' + D.tiers[state.quoteTier].name + '」</span>';
+      bracketHint() + '　|　<span style="color:var(--ac)">报价单只给「' + D.tiers[state.quoteTier].name + '」</span>' + urgentTxt + noFitTxt;
+    renderCostBreak(d);
+  }
+
+  /* 成本构成（纸 / 加工 / 工艺） */
+  function renderCostBreak(d) {
+    var box = $('#costBreak');
+    if (!box) return;
+    var pd = d.pd;
+    var lay = pd.layers.map(function (L, i) {
+      return (pd.layers.length > 1 ? (i === 0 ? '内杯 ' : '外杯 ') : '') +
+        L.paper.name + ' ' + L.gsm + 'g @' + L.price + '元/吨　¥' + fp(L.bodyCost + (L.bottomCost || 0));
+    }).join('　|　');
+    var packTxt = pd.layers.map(function (L) {
+      return (pd.layers.length > 1 ? L.name + ' ' : '') + '拼版 ' + L.pack + ' · 损耗 ' + L.loss + '%';
+    }).join('；');
+    box.innerHTML =
+      '<b>成本构成</b>　纸：' + lay + '　（' + packTxt + '）<br>' +
+      '加工 ¥' + fp(d.proc) + '（成型 ¥' + fp(procCost('make', state.qty)) +
+      ' + 印刷 ¥' + fp(procCost('print', state.qty)) + '）　+ 工艺 ¥' + fp(d.craft) + '　= <b>¥' + fp(d.total) + '</b>';
   }
 
   function bracketHint() {
-    var g = state.gradients, arr = state.grid[state.specId] || [];
+    var g = state.gradients, arr = (state.proc && state.proc.make) || [];
     var pts = [];
     for (var i = 0; i < g.length; i++) {
       var v = arr[i];
       if (v != null && v !== '' && isFinite(v) && v > 0) pts.push([g[i], +v]);
     }
-    if (!pts.length) return '未填成本';
-    if (state.qty <= pts[0][0]) return '取最低档 ' + fq(pts[0][0]);
-    if (state.qty >= pts[pts.length - 1][0]) return '取最高档 ' + fq(pts[pts.length - 1][0]);
+    if (!pts.length) return '加工费未填';
+    if (state.qty <= pts[0][0]) return '加工费取最低档 ' + fq(pts[0][0]);
+    if (state.qty >= pts[pts.length - 1][0]) return '加工费取最高档 ' + fq(pts[pts.length - 1][0]);
     for (var j = 0; j < pts.length - 1; j++) {
       if (state.qty >= pts[j][0] && state.qty <= pts[j + 1][0]) {
-        return fq(pts[j][0]) + '–' + fq(pts[j + 1][0]) + ' 档插值';
+        return '加工费 ' + fq(pts[j][0]) + '–' + fq(pts[j + 1][0]) + ' 档插值';
       }
     }
     return '';
@@ -991,10 +1243,10 @@
     var r = rows[state.quoteTier] || rows[1];
 
     var papers = [];
-    for (var i = 0; i < st.layers; i++) {
-      var cfg = state.papers[i] || state.papers[0];
-      papers.push((st.layers > 1 ? (i === 0 ? '内层 ' : '外层 ') : '') + mat(cfg.material).name + ' ' + cfg.weight + 'g');
-    }
+    cupCfg(sp).layers.forEach(function (L, i) {
+      var p = paperById(L.paperId);
+      papers.push((st.layers > 1 ? (i === 0 ? '内层 ' : '外层 ') : '') + esc(p.name) + ' ' + (num(p.gsm) || '—') + 'g');
+    });
 
     if (!state._no || state._noDate !== today()) {
       var d = new Date();
@@ -1010,7 +1262,7 @@
       spec: sp.oz + 'oz / ' + sp.ml + 'ml　上口 ' + sp.top + ' × 下口 ' + sp.bottom + ' × 高 ' + sp.height + 'mm　' + sp.defW + 'g',
       craft: st.name + '　' + papers.join('　') + '　' + lining().name +
         (state.crafts.length ? '　' + state.crafts.map(function (id) {
-          var c = D.crafts.filter(function (x) { return x.id === id; })[0];
+          var c = allCrafts().filter(function (x) { return x.id === id; })[0];
           return c ? c.name : '';
         }).filter(Boolean).join('、') : '') +
         (curGram() > 0 ? '<br>单杯克重 ' + curGram().toFixed(1) + 'g' +
@@ -1034,6 +1286,11 @@
     if (other > 0) {
       items.push({ idx: items.length + 1, name: '打样 / 专版费', spec: '', unit: '项', qty: 1, price: other, amount: other });
     }
+    // 加急费按单计（不再乘进单价）
+    var urgentFee = state.urgent ? (num(state.params.urgentFee) || 0) : 0;
+    if (urgentFee > 0) {
+      items.push({ idx: items.length + 1, name: '加急费', spec: '交期压缩至 ' + leadTime().days + ' 天', unit: '项', qty: 1, price: urgentFee, amount: urgentFee });
+    }
 
     var total = items.reduce(function (s, it) { return s + it.amount; }, 0);
 
@@ -1051,7 +1308,7 @@
       paper: papers.join('　'),
       lining: lining().name,
       crafts: state.crafts.map(function (id) {
-        var c = D.crafts.filter(function (x) { return x.id === id; })[0];
+        var c = allCrafts().filter(function (x) { return x.id === id; })[0];
         return c ? c.name : '';
       }).filter(Boolean),
       qty: state.qty,
@@ -1808,13 +2065,13 @@
     var c = contractData();
     var missing = [];
     if (!D.company.name) missing.push('公司名');
-    if (!c.buyer.name) missing.push('客户名');
+    if (!(c.q && c.q.customer)) missing.push('客户名');
     if (missing.length) {
       if (!confirm('以下信息还没填：' + missing.join('、') + '\n合同仍可导出，但抬头会留空。继续？')) return;
     }
     try {
       var blob = contractDOCX(opt);
-      saveBlob(blob, '纸杯采购合同-' + (c.buyer.name || '客户') + '-' + c.q.date + '.docx');
+      saveBlob(blob, '纸杯采购合同-' + ((c.q && c.q.customer) || '客户') + '-' + c.q.date + '.docx');
       toast('合同已导出 .docx（Word 可直接编辑）');
     } catch (e) {
       toast('导出失败：' + e.message);
@@ -2376,10 +2633,17 @@
     }).join('');
 
     var matOpts = function (sel) {
-      return D.materials.map(function (m) {
+      return (state.paperStock || []).map(function (m) {
         return '<option value="' + m.id + '"' + (sel === m.id ? ' selected' : '') + '>' + esc(m.name) + '</option>';
       }).join('');
     };
+    // 识别结果给的是「材质族」，换算成纸库里的具体 paperId，否则下拉选不中
+    var matId = function (base) {
+      if (!base) return '';
+      var hit = (state.paperStock || []).filter(function (m) { return (m.base || m.id) === base; })[0];
+      return hit ? hit.id : '';
+    };
+    var fallbackPaper = matId('cupstock') || ((state.paperStock || [])[0] || {}).id || '';
 
     var html = '';
     html += '<div class="ocr-form">';
@@ -2405,15 +2669,10 @@
 
     // 材质
     html += '<div class="of-row"><span class="of-l">材质</span>' +
-      '<select id="ofM1">' + matOpts(r.mats[0] || 'cupstock') + '</select>' +
-      '<select id="ofM2">' + matOpts(r.mats[1] || r.mats[0] || 'cupstock') + '</select></div>';
+      '<select id="ofM1">' + matOpts(matId(r.mats[0]) || fallbackPaper) + '</select>' +
+      '<select id="ofM2">' + matOpts(matId(r.mats[1]) || matId(r.mats[0]) || fallbackPaper) + '</select></div>';
 
-    // 淋膜
-    html += '<div class="of-row"><span class="of-l">淋膜</span>' +
-      '<select id="ofLining">' + D.linings.filter(function (l) { return l.id !== 'none'; }).map(function (l) {
-        var sel = r.lining ? (r.lining === l.id) : (l.id === 'single');
-        return '<option value="' + l.id + '"' + (sel ? ' selected' : '') + '>' + esc(l.name) + '</option>';
-      }).join('') + '</select></div>';
+    // 淋膜：纸价已含 PE 涂膜，不再让用户选
 
     // 工艺
     html += '<div class="of-row of-craft"><span class="of-l">工艺</span><div class="of-ck">' + craftChecks + '</div></div>';
@@ -2453,7 +2712,6 @@
         w1: num($('#ofW1').value) || null,
         w2: layers > 1 ? (num($('#ofW2').value) || null) : null,
         mats: layers > 1 ? [$('#ofM1').value, $('#ofM2').value] : [$('#ofM1').value],
-        lining: $('#ofLining').value,
         crafts: $$('#ocrResult .of-ck input:checked').map(function (x) { return x.value; })
       };
       apply(result);
@@ -2465,21 +2723,52 @@
     setTimeout(function () { if (panel) panel.classList.remove('flash'); }, 1400);
   }
 
+  /* 在同材质族里找克重最接近的纸 */
+  function closestPaper(paperId, gsm) {
+    var base = (paperById(paperId) || {}).base;
+    if (!base) return null;          // 没有材质族就不要跨族乱配
+    var want = num(gsm);
+    var best = null;
+    (state.paperStock || []).forEach(function (p) {
+      if ((p.base || p.id) !== base) return;
+      if (!best) best = p;
+      else if (Math.abs(num(p.gsm) - want) < Math.abs(num(best.gsm) - want)) best = p;
+    });
+    return best;
+  }
+
   function apply(r) {
     if (r.spec) state.specId = r.spec.id;
-    if (r.struct) state.structure = r.struct;
+    var sp = spec();
+    if (r.struct) {
+      var c = cupCfg(sp);
+      c.structure = r.struct;
+      var st = structOf(c.structure);
+      var n = st.layers || 1;
+      var cfg = paperCfg();
+      if (!c.stash) c.stash = [];
+      while (c.layers.length < n) {
+        var src = c.stash[c.layers.length] || {};
+        c.layers.push({
+          paperId: src.paperId || defaultPaperId(sp, c.layers.length, c.structure),
+          pack: src.pack != null ? src.pack : 0,
+          loss: src.loss != null ? src.loss : cfg.lossDefault
+        });
+      }
+      if (c.layers.length > n) {
+        for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
+        c.layers.length = n;
+      }
+    }
     if (r.qty) state.qty = r.qty;
     if (r.crafts.length) state.crafts = r.crafts.slice();
-    if (r.lining) state.lining = r.lining;
 
-    var n = struct().layers;
-    for (var i = 0; i < n; i++) {
-      if (!state.papers[i]) state.papers[i] = { material: 'cupstock', weight: 248 };
-      if (i === 0 && r.w1) state.papers[i].weight = r.w1;
-      if (i === 1 && r.w2) state.papers[i].weight = r.w2;
-      if (!state.papers[i].weight) state.papers[i].weight = i === 0 ? r.spec.defW : 248;
-      if (r.mats.length) state.papers[i].material = r.mats[i] || r.mats[0];
+    var c2 = cupCfg(sp);
+    if (r.mats && r.mats.length) {
+      c2.layers.forEach(function (L, i) { if (r.mats[i]) L.paperId = r.mats[i]; });
     }
+    if (r.w1) { var p1 = closestPaper(c2.layers[0] && c2.layers[0].paperId, r.w1); if (p1 && c2.layers[0]) c2.layers[0].paperId = p1.id; }
+    if (r.w2 && c2.layers[1]) { var p2 = closestPaper(c2.layers[1].paperId, r.w2); if (p2) c2.layers[1].paperId = p2.id; }
     sync();
     toast('已应用');
     var hint = $('#adjustHint');
@@ -2501,16 +2790,16 @@
       inp.type = 'number'; inp.value = g; inp.min = 1; inp.step = 100;
       inp.onchange = function () {
         state.gradients[i] = Math.max(1, Math.round(num(inp.value)));
-        save(); renderGradientTable(); sync();
+        save(); renderProcTable(); sync();
       };
       var del = el('button', 'del', '×');
       del.title = '删除该梯度';
       del.onclick = function () {
         if (state.gradients.length <= 1) { toast('至少保留一档'); return; }
         state.gradients.splice(i, 1);
-        D.specs.forEach(function (s) { if (state.grid[s.id]) state.grid[s.id].splice(i, 1); });
+        ['make', 'print'].forEach(function (k) { if (state.proc[k]) state.proc[k].splice(i, 1); });
         D.crafts.forEach(function (c) { if (state.craftGrid[c.id]) state.craftGrid[c.id].splice(i, 1); });
-        save(); renderGradients(); renderGradientTable(); sync();
+        save(); renderGradients(); renderProcTable(); renderCraftTable(); sync();
       };
       item.appendChild(inp); item.appendChild(del);
       box.appendChild(item);
@@ -2521,78 +2810,279 @@
       var last = state.gradients[state.gradients.length - 1] || 1000;
       var next = Math.round(last * 2 / 100) * 100;
       state.gradients.push(next);
-      D.specs.forEach(function (s) {
-        if (!state.grid[s.id]) state.grid[s.id] = [];
-        state.grid[s.id].push(state.grid[s.id][state.grid[s.id].length - 1] || suggestCost(s, next));
+      ['make', 'print'].forEach(function (k) {
+        if (!state.proc[k]) state.proc[k] = [];
+        state.proc[k].push(state.proc[k][state.proc[k].length - 1] || suggestProc(k, next));
       });
       D.crafts.forEach(function (c) {
         if (!state.craftGrid[c.id]) state.craftGrid[c.id] = [];
         state.craftGrid[c.id].push(state.craftGrid[c.id][state.craftGrid[c.id].length - 1] || c.prices[1]);
       });
-      save(); renderGradients(); renderGradientTable(); renderCraftTable(); sync();
+      save(); renderGradients(); renderProcTable(); renderCraftTable(); sync();
     };
     box.appendChild(add);
   }
 
-  /* 梯度表：杯型行支持 添加/删除/上下移动（自定义杯型存 state.customSpecs） */
-  function renderGradientTable() {
-    var tbl = $('#gradTable');
+  /* ---------------- 纸 / 纸杯（核心） ---------------- */
+
+  /* 工艺参数：默认损耗 / 卷边 / 杯底余量 / PE */
+  function renderPaperCfg() {
+    var box = $('#paperGrid');
+    if (!box) return;
+    var cfg = paperCfg();
+    var html = '';
+    html += '<label><span>默认损耗 (%)</span><input type="number" step="1" data-pp="lossDefault" value="' + cfg.lossDefault + '"><span class="hint">有效拼版 = 拼版 ×(1−损耗)</span></label>';
+    box.innerHTML = html;
+    $$('#paperGrid input').forEach(function (inp) {
+      inp.onchange = function () {
+        var k = inp.dataset.pp, v = num(inp.value);
+        var lim = { lossDefault: [0, 90] }[k];
+        if (lim) v = Math.min(lim[1], Math.max(lim[0], v));
+        state.paper[k] = v;
+        save(); renderPaperCfg(); renderPaperTable(); sync();
+      };
+    });
+  }
+
+  /* 纸库：名称 / 长宽 / 克重 / 吨价 / 说明，可增删改 */
+  function renderMaterialTable() {
+    var tbl = $('#matTable');
     if (!tbl) return;
+    var list = state.paperStock || [];
+    var html = '<thead><tr>' +
+      '<th class="l">纸张名称</th><th>长 (mm)</th><th>宽 (mm)</th>' +
+      '<th>克重 (g/m²)</th><th>价格 (元/吨)</th><th class="l">说明</th>' +
+      '<th style="width:36px"></th></tr></thead><tbody>';
+    list.forEach(function (p) {
+      html += '<tr data-stock="' + p.id + '">' +
+        '<td><input type="text" data-sk="name" data-sid="' + p.id + '" value="' + esc(p.name) + '"></td>' +
+        '<td><input type="number" step="1" data-sk="len" data-sid="' + p.id + '" value="' + (num(p.len) || '') + '"></td>' +
+        '<td><input type="number" step="1" data-sk="wid" data-sid="' + p.id + '" value="' + (num(p.wid) || '') + '"></td>' +
+        '<td><input type="number" step="1" data-sk="gsm" data-sid="' + p.id + '" value="' + (num(p.gsm) || '') + '"></td>' +
+        '<td><input type="number" step="50" data-sk="price" data-sid="' + p.id + '" value="' + (num(p.price) || '') + '"></td>' +
+        '<td><input type="text" data-sk="desc" data-sid="' + p.id + '" value="' + esc(p.desc || '') + '" placeholder="选填"></td>' +
+        '<td class="ops-cell"><button class="rop rop-del" data-stock-del="' + p.id + '" title="删除这张纸">×</button></td>' +
+        '</tr>';
+    });
+    html += '</tbody><tfoot><tr><td colspan="7" class="ops-cell">' +
+      '<button class="link" id="btnAddPaper">＋ 添加纸</button>' +
+      '<span class="dim" style="margin-left:8px">新加的纸默认按「杯纸」自动套到杯型上，可在「纸杯」表里逐个改成别的纸；删除正在用的纸会自动改用列表第一张</span>' +
+      '</td></tr></tfoot>';
+    tbl.innerHTML = html;
+
+    $$('#matTable input[data-sk], #matTable select[data-sk]').forEach(function (inp) {
+      inp.onchange = function () {
+        var p = (state.paperStock || []).filter(function (x) { return x.id === inp.dataset.sid; })[0];
+        if (!p) return;
+        var k = inp.dataset.sk;
+        if (k === 'name') p.name = inp.value;
+        else if (k === 'desc') p.desc = inp.value;
+        else if (k === 'len') p.len = Math.min(5000, Math.max(50, num(inp.value) || 787));
+        else if (k === 'wid') p.wid = Math.min(5000, Math.max(50, num(inp.value) || 1092));
+        else if (k === 'gsm') p.gsm = Math.min(1000, Math.max(50, num(inp.value) || 268));
+        else if (k === 'price') p.price = Math.max(0, num(inp.value));
+        save(); renderMaterialTable(); renderPaperTable(); sync();
+      };
+    });
+    $$('#matTable button[data-stock-del]').forEach(function (b) {
+      b.onclick = function () {
+        var id = b.dataset.stockDel;
+        if ((state.paperStock || []).length <= 1) { toast('至少保留一张纸'); return; }
+        state.paperStock = (state.paperStock || []).filter(function (x) { return x.id !== id; });
+        var first = state.paperStock[0].id;
+        Object.keys(state.cupPaper || {}).forEach(function (sid) {
+          (state.cupPaper[sid].layers || []).forEach(function (L) { if (L.paperId === id) L.paperId = first; });
+        });
+        save(); renderMaterialTable(); renderPaperTable(); sync();
+      };
+    });
+    var add = $('#btnAddPaper');
+    if (add) add.onclick = function () {
+      state.paperStock.push({
+        id: 'p' + Date.now().toString(36),
+        base: 'cupstock', name: '新纸张', len: 787, wid: 1092, gsm: 268, price: 6800, desc: ''
+      });
+      save(); renderMaterialTable(); renderPaperTable(); sync();
+      toast('已加一张纸，记得核对名称 / 克重 / 吨价');
+    };
+  }
+
+  /* 纸杯表：每个杯型选纸 / 选单双层 / 填拼版与损耗，自动算单杯重量 */
+  function renderPaperTable() {
+    var tbl = $('#paperTable');
+    if (!tbl) return;
+    var cfg = paperCfg();
     var specs = allSpecs();
+    var stock = state.paperStock || [];
+
     var head = '<thead><tr>' +
       '<th class="l">杯型</th>' +
       '<th class="cap-th">容量</th>' +
-      '<th>纸张克重</th>' +
-      state.gradients.map(function (g) { return '<th>' + fq(g) + ' 只</th>'; }).join('') +
-      '<th>当前成本</th><th>发货时间</th><th style="width:76px"></th></tr></thead>';
+      '<th>结构</th>' +
+      '<th>层</th>' +
+      '<th>纸张</th>' +
+      '<th>拼版数</th>' +
+      '<th>损耗 %</th>' +
+      '<th>杯身重</th>' +
+      '<th>杯身成本</th>' +
+      '<th>底片重</th>' +
+      '<th>底片成本</th>' +
+      '<th>层重</th>' +
+      '<th style="width:76px"></th></tr></thead>';
 
-    var rows = specs.map(function (s, si) {
-      var arr = state.grid[s.id] || [];
-      var cur = baseCost(s.id, state.qty);
-      var base = leadTime(s.id, 'single', [], [{ weight: s.defW }]);
-      var isCustom = s.id.indexOf('custom-') === 0;
-      return '<tr data-rid="' + s.id + '"' + (s.id === state.specId ? ' class="cur"' : '') + '>' +
+    var rows = [];
+    specs.forEach(function (s, si) {
+      var cc = cupCfg(s);
+      var st = structOf(cc.structure);
+      var calc = cupPaperCalc(s);
+      var cur = s.id === state.specId ? ' cur' : '';
+      // 分组行：杯型 + 结构 + 汇总
+      var optHtml = (D.structures || []).map(function (x) {
+        return '<option value="' + x.id + '"' + (x.id === cc.structure ? ' selected' : '') + '>' + x.name + '</option>';
+      }).join('');
+      rows.push('<tr class="grp' + cur + '" data-rid="' + s.id + '">' +
         '<td class="nm">' + esc(s.name) + '</td>' +
         '<td class="cap-cell">' + (s.oz || '—') + 'oz / ' + (s.ml || '—') + 'ml</td>' +
-        '<td class="wt-cell">' + (s.defW || '—') + 'g</td>' +
-        state.gradients.map(function (g, i) {
-          return '<td><input type="number" min="0" step="0.001" data-s="' + s.id + '" data-i="' + i + '" value="' + (arr[i] != null ? arr[i] : '') + '"></td>';
-        }).join('') +
-        '<td class="cur-cell">' + (cur ? '¥' + fp(cur) : '—') + '</td>' +
-        '<td class="lead-cell" title="' + esc(base.parts.map(function (x) { return x.label + ' +' + x.d; }).join('　')) + '">' + base.days + ' 天</td>' +
+        '<td><select data-struct="' + s.id + '">' + optHtml + '</select></td>' +
+        '<td class="dim" colspan="9">单杯 <b>' + calc.gram.toFixed(1) + ' g</b>　｜　纸价 <b>¥' + fp(calc.cost) + '</b>/只' +
+        (calc.noFit ? '　<span style="color:#c0392b;font-weight:600">⚠ 拼版放不下</span>' : '') + '</td>' +
         '<td class="ops-cell">' + rowOps('spec', s.id, si, specs.length) + '</td>' +
-        '</tr>';
+        '</tr>');
+      // 层行
+      calc.layers.forEach(function (L) {
+        var raw = cc.layers[L.i] || {};
+        var pOpts = stock.map(function (p) {
+          return '<option value="' + p.id + '"' + (p.id === L.paper.id ? ' selected' : '') + '>' +
+            esc(p.name) + '（' + (num(p.gsm) || '—') + 'g）</option>';
+        }).join('');
+        var autoPackN = autoPack(s, L.paper, cfg);
+        rows.push('<tr class="layerrow">' +
+          '<td class="dim" colspan="3"></td>' +
+          '<td class="dim">' + (L.i === 0 ? '内杯' : '外杯') + '</td>' +
+          '<td><select data-paper="' + s.id + '" data-li="' + L.i + '">' + pOpts + '</select></td>' +
+          '<td><input type="number" min="0" step="1" data-pack="' + s.id + '" data-li="' + L.i + '" value="' +
+          (num(raw.pack) > 0 ? num(raw.pack) : '') + '" placeholder="' + autoPackN + '"></td>' +
+          '<td><input type="number" min="0" max="90" step="1" data-loss="' + s.id + '" data-li="' + L.i + '" value="' +
+          (num(raw.loss) || 0) + '"></td>' +
+          '<td class="dim">' + L.bodyGram.toFixed(1) + ' g</td>' +
+          '<td class="dim">¥' + fp(L.bodyCost) + '</td>' +
+          '<td class="dim">' + (L.bottomGram != null ? L.bottomGram.toFixed(1) + ' g' : '—') + '</td>' +
+          '<td class="dim">' + (L.bottomCost != null ? '¥' + fp(L.bottomCost) : '—') + '</td>' +
+          '<td class="dim">' + ((L.bodyGram + (L.bottomGram || 0)).toFixed(1)) + ' g</td>' +
+          '<td class="ops-cell"></td>' +
+          '</tr>');
+      });
     });
 
     tbl.innerHTML = head + '<tbody>' + rows.join('') + '</tbody>';
 
-    $$('#gradTable input').forEach(function (inp) {
-      inp.onchange = function () {
-        var id = inp.dataset.s, i = +inp.dataset.i;
-        if (!state.grid[id]) state.grid[id] = [];
-        state.grid[id][i] = inp.value === '' ? null : num(inp.value);
-        save(); sync();
-        var curCell = inp.closest('tr').querySelector('.cur-cell');
-        var c = baseCost(id, state.qty);
-        if (curCell) curCell.textContent = c ? '¥' + fp(c) : '—';
+    // 结构下拉
+    $$('#paperTable select[data-struct]').forEach(function (sel) {
+      sel.onchange = function () {
+        var s = specById(sel.dataset.struct);
+        if (!s) return;
+        var c = cupCfg(s);
+        c.structure = sel.value;
+        var st = structOf(c.structure);
+        var n = st.layers || 1;
+        var cfg = paperCfg();
+        if (!c.stash) c.stash = [];
+        while (c.layers.length < n) {
+          // 切回双层时沿用之前那层的拼版/损耗
+          var src = c.stash[c.layers.length] || {};
+          c.layers.push({
+            paperId: src.paperId || defaultPaperId(s, c.layers.length, c.structure),
+            pack: src.pack != null ? src.pack : 0,
+            loss: src.loss != null ? src.loss : cfg.lossDefault
+          });
+        }
+        if (c.layers.length > n) {
+          for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
+          c.layers.length = n;
+        }
+        save(); renderPaperTable(); sync();
       };
     });
-    makeSortable('#gradTable', 'spec', function () { renderGradientTable(); renderSpecSelect(); sync(); });
-    bindRowOps('#gradTable', function () {
-      // 删除自定义杯型时清理 grid
+    // 选纸
+    $$('#paperTable select[data-paper]').forEach(function (sel) {
+      sel.onchange = function () {
+        var s = specById(sel.dataset.paper);
+        if (!s) return;
+        var c = cupCfg(s);
+        var L = c.layers[num(sel.dataset.li)] || c.layers[0];
+        if (!L) return;
+        L.paperId = sel.value;
+        save(); renderPaperTable(); sync();
+      };
+    });
+    // 拼版数
+    $$('#paperTable input[data-pack]').forEach(function (inp) {
+      inp.onchange = function () {
+        var s = specById(inp.dataset.pack);
+        if (!s) return;
+        var c = cupCfg(s);
+        var L = c.layers[num(inp.dataset.li)] || c.layers[0];
+        if (!L) return;
+        var v = inp.value === '' ? 0 : Math.max(0, Math.round(num(inp.value)));
+        L.pack = v;
+        save(); renderPaperTable(); sync();
+      };
+    });
+    // 损耗
+    $$('#paperTable input[data-loss]').forEach(function (inp) {
+      inp.onchange = function () {
+        var s = specById(inp.dataset.loss);
+        if (!s) return;
+        var c = cupCfg(s);
+        var L = c.layers[num(inp.dataset.li)] || c.layers[0];
+        if (!L) return;
+        L.loss = Math.min(90, Math.max(0, num(inp.value)));
+        save(); renderPaperTable(); sync();
+      };
+    });
+    makeSortable('#paperTable', 'spec', function () { renderPaperTable(); renderSpecSelect(); sync(); });
+    bindRowOps('#paperTable', function () {
       state.customSpecs = state.customSpecs.filter(function (s) {
-        if (s._del) { delete state.grid[s.id]; return false; }
+        if (s._del) { delete state.cupPaper[s.id]; return false; }
         return true;
       });
-      renderGradientTable(); renderSpecSelect(); sync();
+      renderPaperTable(); renderSpecSelect(); sync();
     });
-
-    // 添加杯型按钮
-    var addBox = $('#gradAddRow');
-    if (addBox) addBox.style.display = '';
   }
 
-  /* 添加自定义杯型 */
+  /* 加工费梯度（成型 / 印刷） */
+  function renderProcTable() {
+    var tbl = $('#procTable');
+    if (!tbl) return;
+    var items = [
+      { k: 'make', name: '成型加工', desc: '模切 / 卷边 / 粘合 / 成型，含开机摊销' },
+      { k: 'print', name: '印刷开机', desc: '油墨 + 开机损耗摊销（版费另计，摊入单价）' }
+    ];
+    var head = '<thead><tr><th class="l">加工项</th>' +
+      state.gradients.map(function (g) { return '<th>' + fq(g) + ' 只</th>'; }).join('') +
+      '<th>当前</th><th class="l">说明</th></tr></thead>';
+    var rows = items.map(function (it) {
+      var arr = (state.proc || {})[it.k] || [];
+      return '<tr><td class="nm">' + it.name + '</td>' +
+        state.gradients.map(function (g, i) {
+          return '<td><input type="number" min="0" step="0.0005" data-pr="' + it.k + '" data-i="' + i + '" value="' + (arr[i] != null ? arr[i] : '') + '"></td>';
+        }).join('') +
+        '<td class="cur-cell">¥' + fp(procCost(it.k, state.qty)) + '</td>' +
+        '<td class="ds">' + esc(it.desc) + '</td></tr>';
+    });
+    tbl.innerHTML = head + '<tbody>' + rows.join('') + '</tbody>';
+    $$('#procTable input').forEach(function (inp) {
+      inp.onchange = function () {
+        var k = inp.dataset.pr, i = +inp.dataset.i;
+        if (!state.proc[k]) state.proc[k] = [];
+        state.proc[k][i] = inp.value === '' ? null : num(inp.value);
+        save(); renderProcTable(); sync();
+      };
+    });
+  }
+
+  /* 「结构附加工费」表已移除：单层/双层由「纸杯」页选纸决定，工费随纸自动计 */
+
   /* 添加自定义杯型（弹窗式） */
   function openSpecModal() {
     var m = $('#specModal');
@@ -2626,31 +3116,46 @@
       box: '', ref: {}, note: '', custom: true
     };
     state.customSpecs.push(spec);
-    state.grid[id] = state.gradients.map(function (g) { return suggestCost(spec, g); });
     $('#specModal').classList.remove('on');
-    save(); renderGradientTable(); renderSpecSelect(); sync();
+    save(); renderPaperTable(); renderSpecSelect(); sync();
     toast('已添加「' + name + '」');
   }
   function renderWeightTable() {
     var tbl = $('#wtTable');
     if (!tbl) return;
 
+    // 右上角提示：自动克重已联动纸杯表，只有箱规需要手填
+    var hint = $('#wtHint');
+    if (hint) {
+      var noFit = allSpecs().filter(function (s) { return cupPaperCalc(s).noFit; }).length;
+      hint.textContent = noFit
+        ? '自动克重按「纸杯」表算（' + noFit + ' 个杯型拼版放不下，见红字）· 箱规需手填'
+        : '自动克重按「纸杯」表实时算 · 实测克重可覆盖 · 箱规需手填';
+    }
+
     var head = '<thead><tr>' +
       '<th class="l">杯型</th>' +
-      '<th>单杯克重 (g)</th>' +
+      '<th>自动克重 (g)</th>' +
+      '<th>实测克重 (g)</th>' +
       '<th class="l">箱规（可多行）</th>' +
       '<th>箱体 m³</th>' +
       '<th>总重</th>' +
       '</tr></thead>';
 
-    var rows = D.specs.map(function (s) {
-      var g1 = gramOf(s);
+    var rows = allSpecs().map(function (s) {
+      var calc = cupPaperCalc(s);
+      var auto = autoGram(s);
+      var manual = gramOf(s);
+      var g1 = manual > 0 ? manual : auto;
       var hasW = g1 > 0;
       var boxes = boxesOf(s);
       var totalKg = hasW ? g1 * state.qty / 1000 : 0;
       // 选与订单最接近的箱规来算体积展示
       var best = boxes.filter(function (b) { return b.per > 0 && state.qty >= b.per; }).pop() || boxes[0];
       var vol = best && best.per > 0 ? (best.l * best.w * best.h / 1e6) : 0;
+      // 净重不受拼版影响照常显示；放不下（影响成本）时加红标
+      var autoCell = (auto > 0 ? auto.toFixed(1) + ' g' : '—') +
+        (calc.noFit ? ' <span style="color:#c0392b;font-weight:600" title="该杯型纸张拼版放不下，纸成本未计入，请到「纸杯」表填拼版">⚠</span>' : '');
 
       var boxHtml = boxes.map(function (b, bi) {
         return '<div class="bx-row" data-sp="' + s.id + '" data-bi="' + bi + '">' +
@@ -2666,8 +3171,9 @@
 
       return '<tr' + (s.id === state.specId ? ' class="cur"' : '') + '>' +
         '<td class="nm">' + esc(s.name) + '</td>' +
+        '<td class="dim">' + autoCell + '</td>' +
         '<td><div class="inp-wrap">' +
-          '<input type="number" min="0" step="0.1" class="mini-inp" data-wtg="' + s.id + '" placeholder="填写" value="' + (hasW ? g1 : '') + '">' +
+          '<input type="number" min="0" step="0.1" class="mini-inp" data-wtg="' + s.id + '" placeholder="' + (auto > 0 ? auto.toFixed(1) : '填写') + '" value="' + (manual > 0 ? manual : '') + '">' +
         '</div></td>' +
         '<td class="box-multi">' + boxHtml +
           '<button class="bx-add" data-bxadd="' + s.id + '">＋ 加箱规</button>' +
@@ -2713,7 +3219,7 @@
     $$('#wtTable .bx-add').forEach(function (b) {
       b.onclick = function () {
         var id = b.dataset.bxadd;
-        var sp = D.specs.filter(function (x) { return x.id === id; })[0];
+        var sp = specById(id) || spec();
         var arr = (state.boxCfg[id] && state.boxCfg[id].length) ? state.boxCfg[id].slice() : boxesOf(sp).slice();
         arr.push({ per: 0, l: 0, w: 0, h: 0 });
         state.boxCfg[id] = arr;
@@ -3084,7 +3590,7 @@
     var canDel = (kind === 'teaSize' || kind === 'teaPack' || (id && String(id).indexOf('custom-') === 0));
     return '<span class="row-ops">' +
       '<span class="drag-handle" title="按住拖动排序">⋮⋮</span>' +
-      (canDel ? '<button class="rop rop-del" data-op="del" data-kind="' + kind + '" data-idx="' + idx + '" title="删除">×</button>' : '') +
+      (canDel ? '<button class="rop rop-del" data-op="del" data-kind="' + kind + '" data-id="' + esc(id) + '" title="删除">×</button>' : '') +
       '</span>';
   }
 
@@ -3111,16 +3617,17 @@
         dragRow = null;
       });
       tr.addEventListener('dragover', function (e) {
-        if (!dragRow || dragRow === tr) return;
+        if (!dragRow || dragRow === tr || !tr.dataset.rid) return;
         e.preventDefault();
         tr.classList.add('drag-over');
       });
       tr.addEventListener('dragleave', function () { tr.classList.remove('drag-over'); });
       tr.addEventListener('drop', function (e) {
-        if (!dragRow || dragRow === tr) return;
+        if (!dragRow || dragRow === tr || !tr.dataset.rid) return;
         e.preventDefault();
         tr.classList.remove('drag-over');
-        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+        // 只按带 data-rid 的主行排序（子行随主行走）
+        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr[data-rid]'));
         var from = rows.indexOf(dragRow);
         var to = rows.indexOf(tr);
         if (from < 0 || to < 0) return;
@@ -3134,22 +3641,23 @@
         saveOrder(kind, ids);
         save();
         afterChange();
-        save();
-        afterChange();
       });
     });
   }
 
-  /* 绑定删除按钮 */
+  /* 绑定删除按钮（按 id 找，避免拖拽排序后下标错位） */
   function bindRowOps(container, afterChange) {
     $$(container + ' .rop').forEach(function (b) {
       b.onclick = function () {
-        var kind = b.dataset.kind, op = b.dataset.op, idx = +b.dataset.idx;
+        var kind = b.dataset.kind, op = b.dataset.op, id = b.dataset.id;
         if (op !== 'del') return;
         var arr = listFor(kind);
-        var item = arr[idx];
-        arr.splice(idx, 1);
-        if (kind === 'spec' && item && item.id && state.grid) delete state.grid[item.id];
+        var at = -1;
+        for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].id === id) { at = i; break; } }
+        if (at < 0) return;
+        var item = arr[at];
+        arr.splice(at, 1);
+        if (kind === 'spec' && item && item.id) delete state.cupPaper[item.id];
         if (kind === 'craft' && item && item.id && state.craftGrid) delete state.craftGrid[item.id];
         save(); afterChange();
       };
@@ -3475,44 +3983,6 @@
     });
   }
 
-  function renderAddon() {
-    var tbl = $('#addonTable');
-    if (!tbl) return;
-    var ad = state.addon;
-    var html = '<thead><tr><th class="l">加价项</th><th>加价（元/只）</th><th class="l">说明</th></tr></thead><tbody>';
-
-    html += '<tr class="grp"><td colspan="3">结构加价（相对于单层，只加一次）</td></tr>';
-    D.structures.forEach(function (s) {
-      html += '<tr><td class="nm">' + s.name + '</td><td><input type="number" step="0.001" data-a="struct" data-k="' + s.id + '" value="' + (ad.struct[s.id] != null ? ad.struct[s.id] : 0) + '"></td><td class="ds">' + esc(s.desc) + '</td></tr>';
-    });
-
-    html += '<tr class="grp"><td colspan="3">淋膜加价（相对于单淋膜，只加一次）</td></tr>';
-    D.linings.forEach(function (l) {
-      html += '<tr><td class="nm">' + l.name + '</td><td><input type="number" step="0.001" data-a="lining" data-k="' + l.id + '" value="' + ad.lining[l.id] + '"></td><td class="ds">' + esc(l.desc) + '</td></tr>';
-    });
-
-    html += '<tr class="grp"><td colspan="3">材质加价（<b>按层累计</b>：每一层纸各自加一次，内层加了外层还要再加）</td></tr>';
-    html += '<tr class="hl"><td colspan="3">例：内外双金箔 = 金箔纸 0.10 × 2 层 = <b>+0.20 元/只</b>（不是 0.10）</td></tr>';
-    D.materials.forEach(function (m) {
-      html += '<tr><td class="nm">' + m.name + '</td><td><input type="number" step="0.001" data-a="material" data-k="' + m.id + '" value="' + ad.material[m.id] + '"></td><td class="ds">' + esc(m.desc) + '</td></tr>';
-    });
-
-    html += '<tr class="grp"><td colspan="3">克重加价（按层）</td></tr>';
-    html += '<tr><td class="nm">每 100g</td><td><input type="number" step="0.001" data-a="weight" data-k="1" value="' + ad.weight + '"></td><td class="ds">内层相对杯型默认克重算增减；外层是全新增量，全部计入</td></tr>';
-
-    html += '</tbody>';
-    tbl.innerHTML = html;
-
-    $$('#addonTable input').forEach(function (inp) {
-      inp.onchange = function () {
-        var a = inp.dataset.a, k = inp.dataset.k;
-        if (a === 'weight') state.addon.weight = num(inp.value);
-        else state.addon[a][k] = num(inp.value);
-        save(); sync();
-      };
-    });
-  }
-
   /* 工艺表：内置 + 自定义，支持添加/删除/上下移动 */
   function renderCraftTable() {
     var tbl = $('#craftCostTable');
@@ -3635,7 +4105,7 @@
     renderWeightBox();
     renderDoc();
     save();
-    if ($('#page-cost').classList.contains('on')) { renderGradientTable(); renderCraftTable(); }
+    if ($('#page-cost').classList.contains('on')) { renderPaperTable(); renderProcTable(); renderCraftTable(); renderWeightTable(); }
   }
 
   function page(name) {
@@ -3643,7 +4113,8 @@
     $$('.page').forEach(function (p) { p.classList.toggle('on', p.id === 'page-' + name); });
     if (name === 'ship') { shipTabs(); if (!document.getElementById('shipPanels').innerHTML) renderShipCompany((D.shipping || [])[1].id); renderShipQuote(); }
     if (name === 'cost') {
-      renderGradients(); renderGradientTable(); renderAddon(); renderCraftTable(); renderTeaCost(); renderLeadTable(); renderParams();
+      renderGradients(); renderPaperCfg(); renderMaterialTable(); renderPaperTable();
+      renderProcTable(); renderCraftTable(); renderTeaCost(); renderLeadTable(); renderParams();
       // 茶叶杯模式：切到茶叶杯页
       if (state.mode === 'tea') {
         var tb = $('.cost-tabs button[data-cost-tab="tea"]');
@@ -3656,14 +4127,8 @@
   function setSpec(id) {
     state.specId = id;
     var s = spec();
-    if (s.group === '中空杯') state.structure = 'double';
-    else if (s.group === '外贴/银箔') state.structure = 'outer';
-    else if (s.group === '金箔铝箔') {
-      state.structure = 'double';
-      state.papers[0] = { material: 'gold', weight: 300 };
-      state.papers[1] = { material: 'gold', weight: 300 };
-    } else state.structure = 'single';
-    if (state.papers[0]) state.papers[0].weight = s.defW;
+    // 没有配置过的杯型按分组给默认结构 + 默认纸
+    cupCfg(s);
     sync();
   }
 
@@ -3705,7 +4170,8 @@
     $('#qtyInput').oninput = function () { setQty(this.value); };
     if ($('#qtyInput2')) $('#qtyInput2').oninput = function () { setQty(this.value); };
 
-    $('#liningSel').onchange = function () { state.lining = this.value; sync(); };
+    var lsel = $('#liningSel');
+    if (lsel) lsel.onchange = function () { state.lining = this.value; sync(); };
     $('#urgentOn').onchange = function () { state.urgent = this.checked; sync(); };
     if ($('#freightPay')) $('#freightPay').onchange = function () { state.freightPay = this.value; sync(); };
     if ($('#qFreight2')) {
@@ -3774,39 +4240,58 @@
       b.onclick = function () {
         $$('.cost-tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
         var t = b.dataset.costTab;
-        ['grad', 'addon', 'craft', 'weight', 'tea', 'teaweight', 'lead', 'param'].forEach(function (k) {
+        ['stock', 'cup', 'proc', 'craft', 'weight', 'tea', 'teaweight', 'lead', 'param'].forEach(function (k) {
           var box = $('#costTab' + (k.charAt(0).toUpperCase() + k.slice(1)));
           if (box) box.style.display = k === t ? '' : 'none';
         });
         if (t === 'tea') renderTeaCost();
+        if (t === 'stock') { renderPaperCfg(); renderMaterialTable(); }
+        if (t === 'cup') { renderPaperTable(); }
+        if (t === 'proc') { renderGradients(); renderProcTable(); }
         if (t === 'weight') renderWeightTable();
         if (t === 'teaweight') renderTeaWeight();
       };
     });
 
     $('#btnFillSuggest').onclick = function () {
-      if (!confirm('用「纸价估算值」覆盖梯度表所有格？已填的会被覆盖。')) return;
-      D.specs.forEach(function (s) {
-        state.grid[s.id] = state.gradients.map(function (g) { return suggestCost(s, g); });
+      if (!confirm('用参考值填充「加工」梯度表所有格？已填的会被覆盖。')) return;
+      ['make', 'print'].forEach(function (k) {
+        state.proc[k] = state.gradients.map(function (g) { return suggestProc(k, g); });
       });
-      save(); renderGradientTable(); sync();
-      toast('已填充参考成本');
+      save(); renderProcTable(); sync();
+      toast('已填充加工费参考值');
     };
 
     $('#btnExportCost').onclick = function () {
-      var head = ['杯型', '规格'].concat(state.gradients.map(function (g) { return g + '只'; }));
+      var cfg = paperCfg();
+      var head = ['杯型', '规格', '结构', '层', '纸张', '克重g', '拼版数', '损耗%', '杯身重g', '杯身成本元', '底片重g', '底片成本元', '单杯重g', '单只纸价元'];
       var L = [head.join(',')];
-      D.specs.forEach(function (s) {
-        var arr = state.grid[s.id] || [];
-        L.push([s.name, s.oz + 'oz/' + s.defW + 'g'].concat(state.gradients.map(function (g, i) { return arr[i] != null ? arr[i] : ''; })).join(','));
+      allSpecs().forEach(function (s) {
+        var cc = cupCfg(s);
+        var calc = cupPaperCalc(s);
+        calc.layers.forEach(function (ly) {
+          L.push([s.name, s.oz + 'oz/' + s.ml + 'ml', structOf(cc.structure).name,
+            ly.name, ly.paper.name, ly.gsm, ly.pack, ly.loss,
+            ly.bodyGram.toFixed(1), ly.bodyCost.toFixed(5),
+            ly.bottomGram != null ? ly.bottomGram.toFixed(1) : '',
+            ly.bottomCost != null ? ly.bottomCost.toFixed(5) : '',
+            calc.gram.toFixed(1), calc.cost.toFixed(5)].join(','));
+        });
       });
-      saveBlob(new Blob(['\ufeff' + L.join('\r\n')], { type: 'text/csv;charset=utf-8' }), '成本梯度表.csv');
+      saveBlob(new Blob(['\ufeff' + L.join('\r\n')], { type: 'text/csv;charset=utf-8' }), '纸杯成本表.csv');
     };
 
     $('#btnExportAll').onclick = function () {
       saveBlob(new Blob([JSON.stringify({
-        v: 3, gradients: state.gradients, grid: state.grid, craftGrid: state.craftGrid,
-        addon: state.addon, params: state.params, tiers: D.tiers, company: D.company
+        v: 5, gradients: state.gradients,
+        paper: state.paper, paperStock: state.paperStock, cupPaper: state.cupPaper, proc: state.proc,
+        craftGrid: state.craftGrid, addon: state.addon,
+        specOrder: state.specOrder, craftOrder: state.craftOrder, teaState: state.tea,
+        tiers: D.tiers, invoices: D.invoices,
+        params: state.params, company: D.company,
+        wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, shipGrid: state.shipGrid,
+        customSpecs: state.customSpecs, customCrafts: state.customCrafts,
+        tea: D.tea, lead: state.lead
       }, null, 2)], { type: 'application/json' }), '纸杯报价备份.json');
     };
 
@@ -3818,11 +4303,31 @@
         try {
           var o = JSON.parse(fr.result);
           if (o.gradients) state.gradients = o.gradients;
-          if (o.grid) state.grid = o.grid;
+          if (o.paper) state.paper = o.paper;
+          if (o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
+          state.cupPaper = o.cupPaper || {};
+          if (o.proc) state.proc = o.proc;
           if (o.craftGrid) state.craftGrid = o.craftGrid;
           if (o.addon) state.addon = o.addon;
           if (o.params) Object.assign(state.params, o.params);
           if (o.tiers) D.tiers = o.tiers;
+          if (o.invoices) D.invoices = o.invoices;
+          if (o.materials) (o.materials || []).forEach(function (mm) {
+            var m = (state.paperStock || []).filter(function (x) { return x.id === mm.id; })[0] ||
+              (state.paperStock || []).filter(function (x) { return (x.base || x.id) === mm.id; })[0];
+            if (m && mm.price != null) m.price = num(mm.price);
+          });
+          if (o.wt) state.wt = o.wt;
+          if (o.boxCfg) state.boxCfg = o.boxCfg;
+          if (o.shipZones) state.shipZones = o.shipZones;
+          if (o.shipGrid) state.shipGrid = o.shipGrid;
+          if (o.customSpecs) state.customSpecs = o.customSpecs;
+          if (o.customCrafts) state.customCrafts = o.customCrafts;
+          if (o.specOrder) state.specOrder = o.specOrder;
+          if (o.craftOrder) state.craftOrder = o.craftOrder;
+          if (o.teaState) state.tea = Object.assign(state.tea, o.teaState);
+          if (o.tea) D.tea = o.tea;
+          if (o.lead) state.lead = o.lead;
           if (o.company) Object.assign(D.company, o.company);
           initData(); save(); page('cost'); sync(); toast('已导入');
         } catch (e) { toast('格式不对'); }
@@ -3892,8 +4397,9 @@
   else init();
 
   window.PC_APP = {
-    tiers: tiers, costDetail: costDetail, unitCost: unitCost,
-    baseCost: baseCost, craftPrice: craftPrice, areaOf: areaOf,
+    tiers: tiers, costDetail: costDetail, unitCost: unitCost, cupCost: cupCost,
+    cupPaperCalc: cupPaperCalc, cupCfg: cupCfg, fanBlank: fanBlank, autoPack: autoPack, paperCfg: paperCfg, paperById: paperById,
+    procCost: procCost, craftPrice: craftPrice, fanArea: fanArea,
     leadTime: leadTime, leadText: leadText,
     teaCalc: teaCalc, renderTea: renderTea, switchMode: switchMode, teaData: teaData,
     shipAutoCalc: shipAutoCalc, shipCost: shipCost, curGram: curGram,
@@ -3902,88 +4408,3 @@
     recognize: recognize, state: state, data: D, save: save, renderShipQuote: renderShipQuote
   };
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

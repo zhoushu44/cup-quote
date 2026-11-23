@@ -76,23 +76,40 @@ window.PC_DATA = (function () {
     { id: 'outer', name: '外贴', layers: 2, extra: 0.016, outerRatio: 0.92, desc: '成品杯身外套一层印刷纸/银箔纸' }
   ];
 
-  /* 纸张材质：price = 元/吨（含税到厂参考价，可在成本页按实际采购价改） */
-  var materials = [
-    { id: 'cupstock', name: '食品级杯纸', price: 6800, desc: '纸杯专用原纸，性价比最高（默认）' },
-    { id: 'white', name: '白卡纸', price: 7600, desc: '白度高、印刷还原好' },
-    { id: 'kraft', name: '牛皮纸', price: 6100, desc: '本色牛皮，自然质感' },
-    { id: 'coated', name: '铜版纸', price: 7000, desc: '涂布面，色彩鲜艳' },
-    { id: 'gold', name: '金箔纸', price: 26000, desc: '复合金箔，金属反光' },
-    { id: 'silver', name: '银箔纸', price: 24000, desc: '复合银箔，镜面效果' },
-    { id: 'corr', name: '瓦楞纸', price: 5000, desc: '瓦楞外套专用' }
+  /* 纸库模板：成本页「纸」表里可增删改
+     base = 内部分组（选纸时按杯型自动匹配用，界面上不再显示/维护）
+     len/wid = 整张纸尺寸(mm)；gsm = 克重(g/m²)；price = 元/吨 */
+  var paperStock = [
+    { id: 'cupstock-198', base: 'cupstock', name: '食品级杯纸 198g', len: 787, wid: 1092, gsm: 198, price: 6800, desc: '小杯专用薄纸' },
+    { id: 'cupstock-248', base: 'cupstock', name: '食品级杯纸 248g', len: 787, wid: 1092, gsm: 248, price: 6800, desc: '中杯常用' },
+    { id: 'cupstock-268', base: 'cupstock', name: '食品级杯纸 268g', len: 787, wid: 1092, gsm: 268, price: 6800, desc: '纸杯专用原纸，性价比最高（默认）' },
+    { id: 'cupstock-300', base: 'cupstock', name: '食品级杯纸 300g', len: 787, wid: 1092, gsm: 300, price: 6800, desc: '大杯 / 奶茶杯常用' },
+    { id: 'cupstock-350', base: 'cupstock', name: '食品级杯纸 350g', len: 787, wid: 1092, gsm: 350, price: 6800, desc: '加厚杯' },
+    { id: 'white-268', base: 'white', name: '白卡纸 268g', len: 787, wid: 1092, gsm: 268, price: 7600, desc: '白度高、印刷还原好' },
+    { id: 'white-300', base: 'white', name: '白卡纸 300g', len: 787, wid: 1092, gsm: 300, price: 7600, desc: '大杯白卡' },
+    { id: 'kraft-268', base: 'kraft', name: '牛皮纸 268g', len: 787, wid: 1092, gsm: 268, price: 6100, desc: '本色牛皮，自然质感' },
+    { id: 'coated-268', base: 'coated', name: '铜版纸 268g', len: 787, wid: 1092, gsm: 268, price: 7000, desc: '涂布面，色彩鲜艳' },
+    { id: 'gold-300', base: 'gold', name: '金箔纸 300g', len: 787, wid: 1092, gsm: 300, price: 26000, desc: '复合金箔，金属反光' },
+    { id: 'silver-300', base: 'silver', name: '银箔纸 300g', len: 787, wid: 1092, gsm: 300, price: 24000, desc: '复合银箔，镜面效果' },
+    { id: 'corr-268', base: 'corr', name: '瓦楞纸 268g', len: 787, wid: 1092, gsm: 268, price: 5000, desc: '瓦楞外套专用' }
   ];
+
+  /* ============================================================
+     纸张成本模型（核心）
+     杯身扇片：整张纸钱 ÷ (拼版数 × (1 − 损耗%))
+             整张纸钱 = 纸长×纸宽(m²) × 克重(g/m²) ÷ 1000 × 吨价 ÷ 1000
+     杯底圆片：卷筒纸切圆片，按净面积 × 克重 × 吨价 计（不排版）
+     ============================================================ */
+  var paper = {
+    lossDefault: 8      // 新增纸杯行时的默认损耗 %（有效拼版 = 拼版 × (1−损耗)）
+    // 卷边系数固定 1.06、杯底余量固定 4mm；买的是淋膜纸，PE 涂膜含在纸价里，不再有 PE 参数
+  };
 
   var weights = [198, 210, 230, 248, 268, 280, 300, 320, 350];
 
+  // 淋膜已不再单独计价（纸价已含），这里只保留说明文本
   var linings = [
-    { id: 'none', name: '不淋膜', sides: 0, desc: '仅用于内部核算对比' },
-    { id: 'single', name: '单淋膜', sides: 1, desc: '内壁 PE 淋膜，常规冷热饮' },
-    { id: 'double', name: '双淋膜', sides: 2, desc: '内外双面淋膜，冷饮防结露' }
+    { id: 'pe', name: 'PE淋膜（纸价已含）', sides: 0, desc: '买的是淋膜纸，PE 涂膜含在纸价里' }
   ];
 
   /* 工艺：价格 = 元/只（叠加），plate = 一次性版费 */
@@ -144,6 +161,8 @@ window.PC_DATA = (function () {
       silk: 1,
       digital: 0
     },
+    heavyGsm: 320,                    // 最重一层超过这个克重就多一天
+    heavyAdd: 1,
     urgentDays: 3,                    // 加急最短天数
     round: 1                          // 取整到 1 天
   };
@@ -273,7 +292,8 @@ window.PC_DATA = (function () {
     groups: ['广告杯', '奶茶杯', '中空杯', '金箔铝箔', '外贴/银箔', '纸桶', '纸碗'],
     specs: specs,
     structures: structures,
-    materials: materials,
+    paperStock: paperStock,
+    paper: paper,
     weights: weights,
     linings: linings,
     crafts: crafts,

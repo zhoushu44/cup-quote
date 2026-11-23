@@ -6,12 +6,12 @@
 # ============================================================
 services:
   web:
-    image: ${DOCKER_HUB_USERNAME:-local}/paper-cup-quote:${APP_VERSION:-1.0}
+    image: ${DOCKER_HUB_USERNAME:-local}/paper-cup-quote:${APP_VERSION:-1.2}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        APP_VERSION: ${APP_VERSION:-1.0}
+        APP_VERSION: ${APP_VERSION:-1.2}
     container_name: paper-cup-quote
     restart: unless-stopped
 

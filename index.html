@@ -84,6 +84,7 @@
             <tbody></tbody>
           </table>
           <div class="note" id="tierNote"></div>
+          <div class="note" id="costBreak"></div>
         </div>
 
         <!-- 茶叶杯专用 -->
@@ -223,7 +224,7 @@
           <div class="field-row" id="liningRow">
             <label class="fld grow">
               <span>淋膜</span>
-              <select id="liningSel"></select>
+              <input type="text" id="liningOut" readonly>
             </label>
             <label class="fld w120">
               <span>成本（元/只）</span>
@@ -267,10 +268,10 @@
   <section class="page" id="page-cost">
     <div class="cost-wrap">
       <div class="cost-bar">
-        <h2>成本梯度</h2>
+        <h2>成本</h2>
         <div class="btns">
-          <button class="link" id="btnFillSuggest">填充参考值</button>
-          <button class="link" id="btnExportCost">导出 CSV</button>
+          <button class="link" id="btnFillSuggest">填充加工参考值</button>
+          <button class="link" id="btnExportCost">导出纸杯成本表</button>
           <button class="link" id="btnExportAll">导出备份</button>
           <button class="link" id="btnImport">导入备份</button>
           <input type="file" id="fileImport" accept=".json" hidden>
@@ -278,8 +279,9 @@
       </div>
 
       <div class="cost-tabs">
-        <button class="on" data-cost-tab="grad" data-mode="cup">数量梯度</button>
-        <button data-cost-tab="addon" data-mode="cup">加价项</button>
+        <button class="on" data-cost-tab="stock" data-mode="cup">纸</button>
+        <button data-cost-tab="cup" data-mode="cup">纸杯</button>
+        <button data-cost-tab="proc" data-mode="cup">加工</button>
         <button data-cost-tab="craft">工艺</button>
         <button data-cost-tab="weight" data-mode="cup">重量·箱规</button>
         <button class="tea-tab" data-cost-tab="teaweight" data-mode="tea" style="display:none">重量·箱规</button>
@@ -288,14 +290,36 @@
         <button data-cost-tab="param">参数</button>
       </div>
 
-      <div class="card" id="costTabGrad">
+      <div class="card" id="costTabStock">
         <div class="grad-head">
-          <span class="grad-label">数量档位（只）</span>
-          <div class="grad-list" id="gradList"></div>
+          <span class="grad-label">纸（长宽 / 克重 / 吨价，可增删改）</span>
+          <span class="dim">这里加的纸，纸杯表里都能选到</span>
         </div>
-        <div class="scroll"><table class="ct" id="gradTable"></table></div>
-        <div style="padding:6px 4px 0"><button class="link" id="btnAddSpec">＋ 添加杯型</button><span class="dim" style="margin-left:8px;font-size:10.5px">自定义杯型可删除、上下移动</span></div>
-        <p class="tip">填每个杯型在各数量档位的<b>单只成本</b>（元/只）。报价时按实际数量在相邻两档之间对数插值。留空表示该档不报价。</p>
+        <div class="scroll" style="max-height:none"><table class="ct" id="matTable"></table></div>
+        <div class="grad-head">
+          <span class="grad-label">工艺参数</span>
+          <span class="dim">损耗 = 排版与加工的损耗比例</span>
+        </div>
+        <div class="params" id="paperGrid"></div>
+        <p class="tip">
+          <b>纸</b>：一行 = 一张纸。整张纸尺寸（长×宽）决定能排多少扇片，克重决定杯重，吨价决定纸钱。<br>
+          <b>单只纸成本</b> = 整张纸钱 ÷ (拼版数 × (1 − 损耗%))。<br>
+          <b>杯底</b>：卷筒纸切圆片，不参与排版，按净面积 × 克重 × 吨价 ÷ (1 − 损耗%) 计（切圆片的损耗）。
+        </p>
+      </div>
+
+      <div class="card" id="costTabCup" style="display:none">
+        <div class="grad-head">
+          <span class="grad-label">纸杯（选纸 · 选单双层 · 填拼版与损耗，自动算单杯重量）</span>
+          <div class="btns"><button class="link" id="btnAddSpec">＋ 添加杯型</button><span class="dim">自定义杯型可删除、上下移动</span></div>
+        </div>
+        <div class="scroll"><table class="ct" id="paperTable"></table></div>
+        <p class="tip">
+          <b>结构</b>：单层 / 双层 / 瓦楞 / 外贴。<b>双层会展开成两行</b>：内杯 + 外杯，各用各的纸、拼版与损耗。<br>
+          <b>拼版数</b>：一张纸能排多少片扇片。<b>留空 = 按该纸长宽方排自动算</b>，填了就用你的实际排版（错缝/蜂窝后请填实测值）。<br>
+          <b>损耗%</b>：默认 8%，有效拼版 = 拼版 × (1 − 损耗%)。<br>
+          <b>单杯重量</b>：扇片净重 × 层数 + 杯底圆片净重，自动算出来，可去「重量·箱规」填实测值覆盖。
+        </p>
       </div>
 
       <!-- 重量 / 箱规（独立标签页） -->
@@ -303,19 +327,23 @@
         <div class="grad-head">
           <span class="grad-label">重量 · 箱规</span>
           <div class="btns">
-            <span class="dim" id="wtHint">需手动填写</span>
+            <span class="dim" id="wtHint">自动克重按「纸杯」表算 · 箱规需手填</span>
           </div>
         </div>
         <div class="scroll" style="max-height:none"><table class="ct" id="wtTable"></table></div>
         <p class="tip">
-          <b>单杯克重</b>：必须手动填写（实测称重值）。未填则总重显示「—」。<br>
-          <b>箱规</b>：拆成「每箱装几只 + 长×宽×高(cm)」，全部手动填。
+          <b>自动克重</b>：按成本页「纸杯」表的纸与拼版<b>实时联动算出</b>（净重，不含损耗），改纸杯表这里立刻变。<b>实测克重</b>可手填覆盖（有实测就填实测，总重和运费按实测算）。<br>
+          <b>箱规</b>：拆成「每箱装几只 + 长×宽×高(cm)」，仍需手动填；同一杯型可加多行（1千装 / 2千装 / 5千装）。
         </p>
       </div>
 
-      <div class="card" id="costTabAddon" style="display:none">
-        <div class="scroll"><table class="ct" id="addonTable"></table></div>
-        <p class="tip">梯度表填<b>单层、单淋膜、食品级杯纸、默认克重</b>的成本；换结构、换材质、加减克重、加淋膜时，在这里加价。</p>
+      <div class="card" id="costTabProc" style="display:none">
+        <div class="grad-head">
+          <span class="grad-label">数量档位（只）</span>
+          <div class="grad-list" id="gradList"></div>
+        </div>
+        <div class="scroll"><table class="ct" id="procTable"></table></div>
+        <p class="tip">加工费是<b>除纸以外</b>的单价成本，随数量递减（开机损耗摊薄）。纸的成本在「纸」「纸杯」页按层算（单层一层、双层两层），不在这里重复计。</p>
       </div>
 
       <div class="card" id="costTabCraft" style="display:none">
@@ -453,7 +481,7 @@
         <h2 id="k6">06 成本与报价构成</h2>
         <ul>
           <li><b>原纸</b>：面积 × 克重 × 纸价，占 35–50%</li>
-          <li><b>淋膜</b>：PE 克重 × 面积 × PE 价，占 8–15%</li>
+          <li><b>淋膜</b>：买的是淋膜纸，PE 涂膜含在纸价里，不再单独计</li>
           <li><b>印刷</b>：油墨 + 版费 + 开机损耗</li>
           <li><b>成型</b>：杯身、杯底、卷口，含电费人工</li>
           <li><b>后道</b>：烫金、压纹、UV、覆膜、贴标</li>
