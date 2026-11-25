@@ -748,40 +748,43 @@
     }
   }
 
+  /* 切换结构（结构下拉与识别套用共用） */
+  function setStructure(id) {
+    var sp2 = spec();
+    var c = cupCfg(sp2);
+    if (!c) return;
+    c.structure = id;
+    var n = (structOf(id) || { layers: 1 }).layers || 1;
+    var cfg = paperCfg();
+    if (!c.stash) c.stash = [];
+    while (c.layers.length < n) {
+      var src = c.stash[c.layers.length] || {};
+      c.layers.push({
+        paperId: src.paperId || defaultPaperId(sp2, c.layers.length, c.structure),
+        pack: src.pack != null ? src.pack : 0,
+        loss: src.loss != null ? src.loss : cfg.lossDefault
+      });
+    }
+    if (c.layers.length > n) {
+      for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
+      c.layers.length = n;
+    }
+  }
+
   function renderStruct() {
-    var box = $('#structureChips');
-    box.innerHTML = '';
+    var box = $('#structureSelect');
+    if (!box) return;
     var sp = spec();
     var cc = cupCfg(sp);
-    D.structures.forEach(function (s) {
-      var b = el('button', cc.structure === s.id ? 'on' : '', s.name);
-      b.title = s.desc;
-      b.onclick = function () {
-        var sp2 = spec();
-        var c = cupCfg(sp2);
-        c.structure = s.id;
-        var n = s.layers || 1;
-        var cfg = paperCfg();
-        if (!c.stash) c.stash = [];
-        while (c.layers.length < n) {
-          var src = c.stash[c.layers.length] || {};
-          c.layers.push({
-            paperId: src.paperId || defaultPaperId(sp2, c.layers.length, c.structure),
-            pack: src.pack != null ? src.pack : 0,
-            loss: src.loss != null ? src.loss : cfg.lossDefault
-          });
-        }
-        if (c.layers.length > n) {
-          for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
-          c.layers.length = n;
-        }
-        save(); sync();
-      };
-      box.appendChild(b);
-    });
+    box.innerHTML = D.structures.map(function (s) {
+      return '<option value="' + s.id + '"' + (cc.structure === s.id ? ' selected' : '') + '>' + esc(s.name) + '</option>';
+    }).join('');
+    box.onchange = function () { setStructure(this.value); save(); sync(); };
     var st = structOf(cc.structure);
-    $('#structHint').textContent = st.layers > 1 ? '两层纸（内杯 + 外杯）' : '一层纸';
-    $('#paperLabel').textContent = st.layers > 1 ? '纸张（内杯 / 外杯）' : '纸张';
+    var hint = $('#structHint');
+    if (hint) hint.textContent = st.layers > 1 ? '（两层纸）' : '（一层纸）';
+    var pl = $('#paperLabel');
+    if (pl) pl.textContent = st.layers > 1 ? '纸张（内杯 / 外杯）' : '纸张';
   }
 
   /* 报价页的纸张行：只读显示纸杯表配置，改配置去成本页 */
@@ -883,35 +886,45 @@
     return '';
   }
 
+  /* 多选下拉：单击即增减，不用按 Ctrl */
+  function bindMultiSelect(sel) {
+    if (!sel || sel.dataset.multiBound) return;
+    sel.dataset.multiBound = '1';
+    sel.addEventListener('mousedown', function (e) {
+      if (e.target.tagName !== 'OPTION') return;
+      e.preventDefault();
+      e.target.selected = !e.target.selected;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
   function renderCrafts() {
-    var box = $('#craftChips');
-    box.innerHTML = '';
-    D.crafts.forEach(function (c) {
+    var box = $('#craftSelect');
+    if (!box) return;
+    var all = (state.customCrafts || []).concat(D.crafts);
+    box.innerHTML = all.map(function (c) {
       var on = state.crafts.indexOf(c.id) >= 0;
       var v = craftPrice(c.id, state.qty);
-      var b = el('button', on ? 'on' : '', c.name + '<span class="cp">+' + fp(v) + '</span>');
-      b.title = c.desc + (c.plate ? '（另收版费 ' + c.plate + ' 元，见报价单）' : '');
-      b.onclick = function () {
-        var i = state.crafts.indexOf(c.id);
-        if (i >= 0) state.crafts.splice(i, 1); else state.crafts.push(c.id);
-        sync();
-      };
-      box.appendChild(b);
-    });
+      return '<option value="' + c.id + '"' + (on ? ' selected' : '') + '>' + esc(c.name) + '（+' + fp(v) + '/只）</option>';
+    }).join('');
+    bindMultiSelect(box);
+    box.onchange = function () {
+      state.crafts = Array.prototype.filter.call(box.options, function (o) { return o.selected; })
+        .map(function (o) { return o.value; });
+      sync();
+    };
   }
 
   /* 开票类型 */
   function renderInvoice() {
-    var box = $('#invoiceChips');
+    var box = $('#invoiceSelect');
     if (!box) return;
-    box.innerHTML = '';
-    (D.invoices || []).forEach(function (inv) {
-      var on = state.invoice === inv.id;
+    box.innerHTML = (D.invoices || []).map(function (inv) {
       var rate = num(inv.rate) || 0;
-      var b = el('button', on ? 'on' : '', inv.name + (rate ? '<span class="cp">' + (rate * 100).toFixed(0) + '%</span>' : ''));
-      b.onclick = function () { state.invoice = inv.id; sync(); };
-      box.appendChild(b);
-    });
+      return '<option value="' + inv.id + '"' + (state.invoice === inv.id ? ' selected' : '') + '>' +
+        esc(inv.name) + (rate ? '（' + (rate * 100).toFixed(0) + '%）' : '') + '</option>';
+    }).join('');
+    box.onchange = function () { state.invoice = this.value; sync(); };
     var hint = $('#invoiceHint');
     if (hint) {
       var inv = invoiceObj();
@@ -921,28 +934,24 @@
 
   /* 运费方式 */
   function renderShipping() {
-    var box = $('#shippingChips');
+    var box = $('#shippingSelect');
     if (!box) return;
-    box.innerHTML = '';
-    (D.shipping || []).forEach(function (s) {
-      var on = state.shipping === s.id;
-      var b = el('button', on ? 'on' : '', s.name);
-      b.title = s.desc || '';
-      b.onclick = function () {
-        state.shipping = s.id;
-        // 选了快递：按梯度表自动带出运费
-        if (s.id !== 'none' && state.freightPay === 'prepaid') {
-          state.quote.freight = shipCost(s.id, state.qty);
-          if ($('#qFreight2')) $('#qFreight2').value = Math.round(state.quote.freight);
-        }
-        if (s.id === 'none') {
-          state.quote.freight = 0;
-          if ($('#qFreight2')) $('#qFreight2').value = '';
-        }
-        sync();
-      };
-      box.appendChild(b);
-    });
+    box.innerHTML = (D.shipping || []).map(function (s) {
+      return '<option value="' + s.id + '"' + (state.shipping === s.id ? ' selected' : '') + '>' + esc(s.name) + '</option>';
+    }).join('');
+    box.onchange = function () {
+      state.shipping = this.value;
+      // 选了快递：按梯度表自动带出运费
+      if (this.value !== 'none' && state.freightPay === 'prepaid') {
+        state.quote.freight = shipCost(this.value, state.qty);
+        if ($('#qFreight2')) $('#qFreight2').value = Math.round(state.quote.freight);
+      }
+      if (this.value === 'none') {
+        state.quote.freight = 0;
+        if ($('#qFreight2')) $('#qFreight2').value = '';
+      }
+      sync();
+    };
   }
 
   /* 运费自动算：优先按箱规（按方/按重量），无箱规则回退梯度表 */
@@ -1202,7 +1211,7 @@
     if ($('#calcTea')) $('#calcTea').style.display = isTea ? '' : 'none';
 
     // 右下角：茶叶杯模式隐藏「杯型/结构/纸张/淋膜」
-    ['#structureChips', '#paperLayers', '#liningRow'].forEach(function (sel) {
+    ['#structureRow', '#paperLayers', '#liningRow'].forEach(function (sel) {
       var n = $(sel);
       if (n) n.style.display = isTea ? 'none' : '';
     });
@@ -2608,119 +2617,46 @@
       spec: best, score: bestSc
     };
   }
-  /* 识别结果：可编辑的确认清单 */
-  function renderOcr() {
-    var raw = $('#ocrText').value;
-    var box = $('#ocrResult');
-    if (!raw.trim()) { box.className = 'ocr-out dim'; box.textContent = '识别结果会显示在这里'; return; }
-
-    var r = recognize(raw);
-    var specs = allSpecs();
-
-    // 下拉选项
-    var specOpts = specs.map(function (s) {
-      return '<option value="' + s.id + '"' + (r.spec && r.spec.id === s.id ? ' selected' : '') + '>' +
-        esc(s.name) + '（' + s.oz + 'oz/' + s.ml + 'ml）</option>';
-    }).join('');
-
-    var structOpts = D.structures.map(function (st) {
-      return '<option value="' + st.id + '"' + (r.struct === st.id ? ' selected' : '') + '>' + esc(st.name) + '</option>';
-    }).join('');
-
-    var craftChecks = (D.crafts || []).map(function (c) {
-      var on = r.crafts.indexOf(c.id) >= 0;
-      return '<label class="ck"><input type="checkbox" value="' + c.id + '"' + (on ? ' checked' : '') + '>' + esc(c.name) + '</label>';
-    }).join('');
-
-    var matOpts = function (sel) {
-      return (state.paperStock || []).map(function (m) {
-        return '<option value="' + m.id + '"' + (sel === m.id ? ' selected' : '') + '>' + esc(m.name) + '</option>';
-      }).join('');
-    };
-    // 识别结果给的是「材质族」，换算成纸库里的具体 paperId，否则下拉选不中
-    var matId = function (base) {
-      if (!base) return '';
-      var hit = (state.paperStock || []).filter(function (m) { return (m.base || m.id) === base; })[0];
-      return hit ? hit.id : '';
-    };
-    var fallbackPaper = matId('cupstock') || ((state.paperStock || [])[0] || {}).id || '';
-
-    var html = '';
-    html += '<div class="ocr-form">';
-
-    // 数量
-    html += '<div class="of-row"><span class="of-l">数量</span>' +
-      '<input type="number" id="ofQty" min="1" step="100" value="' + (r.qty || '') + '" placeholder="如 100000">' +
-      '<span class="of-u">只</span></div>';
-
-    // 杯型
-    html += '<div class="of-row"><span class="of-l">杯型</span>' +
-      '<select id="ofSpec">' + (r.spec ? '' : '<option value="">— 未匹配，请选 —</option>') + specOpts + '</select></div>';
-
-    // 结构
-    html += '<div class="of-row"><span class="of-l">结构</span>' +
-      '<select id="ofStruct">' + structOpts + '</select></div>';
-
-    // 克重
-    html += '<div class="of-row"><span class="of-l">克重</span>' +
-      '<input type="number" id="ofW1" min="150" step="1" value="' + (r.w1 || '') + '" placeholder="内层">' +
-      '<input type="number" id="ofW2" min="150" step="1" value="' + (r.w2 || '') + '" placeholder="外层">' +
-      '<span class="of-u">g</span></div>';
-
-    // 材质
-    html += '<div class="of-row"><span class="of-l">材质</span>' +
-      '<select id="ofM1">' + matOpts(matId(r.mats[0]) || fallbackPaper) + '</select>' +
-      '<select id="ofM2">' + matOpts(matId(r.mats[1]) || matId(r.mats[0]) || fallbackPaper) + '</select></div>';
-
-    // 淋膜：纸价已含 PE 涂膜，不再让用户选
-
-    // 工艺
-    html += '<div class="of-row of-craft"><span class="of-l">工艺</span><div class="of-ck">' + craftChecks + '</div></div>';
-
-    html += '</div>';
-
-    // 提示
-    var tip = [];
-    if (!r.spec) tip.push('杯型没认出来，请手动选');
-    if (!r.qty) tip.push('数量没认出来，请手动填');
-    if (tip.length) html += '<div class="ocr-tip">⚠ ' + tip.join('；') + '</div>';
-    else html += '<div class="ocr-tip ok">✓ 识别到 ' + (r.spec ? r.spec.name : '') + '，确认无误后点应用</div>';
-
-    html += '<div class="of-actions"><button class="btn" id="btnApply">应用到报价</button>' +
-      '<button class="link" id="btnOcrReset">重新识别</button></div>';
-
-    box.className = 'ocr-out';
-    box.innerHTML = html;
-
-    // 结构变化时同步内外层输入可用状态
-    var stSel = $('#ofStruct');
-    function syncW() {
-      var st = D.structures.filter(function (x) { return x.id === stSel.value; })[0] || { layers: 1 };
-      var w2 = $('#ofW2'), m2 = $('#ofM2');
-      if (w2) w2.disabled = st.layers < 2;
-      if (m2) m2.disabled = st.layers < 2;
+  /* 识别：一次识别，直接套用到报价（结果在「工艺 · 配置调整」里改） */
+  function applyOcr() {
+    var ta = $('#ocrText');
+    var raw = ta ? ta.value : '';
+    if (!raw.trim()) {
+      toast('先粘贴客户需求文字');
+      if (ta) ta.focus();
+      return;
     }
-    if (stSel) { stSel.onchange = syncW; syncW(); }
+    var r = recognize(raw);
+    var tips = [];
+    if (!r.spec) tips.push('杯型没认出来');
+    if (!r.qty) tips.push('数量没认出来');
 
-    $('#btnApply').onclick = function () {
-      var st = $('#ofStruct').value;
-      var layers = (D.structures.filter(function (x) { return x.id === st; })[0] || { layers: 1 }).layers;
-      var result = {
-        spec: specs.filter(function (x) { return x.id === $('#ofSpec').value; })[0] || null,
-        struct: st,
-        qty: num($('#ofQty').value) || 0,
-        w1: num($('#ofW1').value) || null,
-        w2: layers > 1 ? (num($('#ofW2').value) || null) : null,
-        mats: layers > 1 ? [$('#ofM1').value, $('#ofM2').value] : [$('#ofM1').value],
-        crafts: $$('#ocrResult .of-ck input:checked').map(function (x) { return x.value; })
-      };
-      apply(result);
+    var result = {
+      spec: r.spec || null,
+      struct: r.struct || null,
+      qty: r.qty || 0,
+      w1: r.w1 != null ? r.w1 : null,
+      w2: r.w2 != null ? r.w2 : null,
+      mats: r.mats || [],
+      crafts: r.crafts || []
     };
-    $('#btnOcrReset').onclick = function () { renderOcr(); };
+    apply(result, true);
 
+    // 提示 + 高亮配置面板
+    var hint = $('#adjustHint');
+    if (hint) {
+      var msg = '✓ 已识别' + (r.spec ? '「' + r.spec.name + '」' : '') + (tips.length ? '（' + tips.join('、') + '，请在下方面板补）' : '，可在下面改');
+      hint.textContent = msg;
+      hint.style.color = 'var(--ac)';
+      setTimeout(function () { hint.textContent = '识别后在这里改'; hint.style.color = ''; }, 4000);
+    }
     var panel = $('#panelCraft');
-    if (panel) panel.classList.add('flash');
-    setTimeout(function () { if (panel) panel.classList.remove('flash'); }, 1400);
+    if (panel) {
+      panel.classList.add('flash');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(function () { panel.classList.remove('flash'); }, 1400);
+    }
+    toast(tips.length ? '已套用（' + tips.join('、') + '）' : '已识别并套用到报价');
   }
 
   /* 在同材质族里找克重最接近的纸 */
@@ -2737,31 +2673,12 @@
     return best;
   }
 
-  function apply(r) {
+  function apply(r, quiet) {
     if (r.spec) state.specId = r.spec.id;
     var sp = spec();
-    if (r.struct) {
-      var c = cupCfg(sp);
-      c.structure = r.struct;
-      var st = structOf(c.structure);
-      var n = st.layers || 1;
-      var cfg = paperCfg();
-      if (!c.stash) c.stash = [];
-      while (c.layers.length < n) {
-        var src = c.stash[c.layers.length] || {};
-        c.layers.push({
-          paperId: src.paperId || defaultPaperId(sp, c.layers.length, c.structure),
-          pack: src.pack != null ? src.pack : 0,
-          loss: src.loss != null ? src.loss : cfg.lossDefault
-        });
-      }
-      if (c.layers.length > n) {
-        for (var k = n; k < c.layers.length; k++) c.stash[k] = c.layers[k];
-        c.layers.length = n;
-      }
-    }
+    if (r.struct) setStructure(r.struct);
     if (r.qty) state.qty = r.qty;
-    if (r.crafts.length) state.crafts = r.crafts.slice();
+    if (r.crafts && r.crafts.length) state.crafts = r.crafts.slice();
 
     var c2 = cupCfg(sp);
     if (r.mats && r.mats.length) {
@@ -2770,12 +2687,14 @@
     if (r.w1) { var p1 = closestPaper(c2.layers[0] && c2.layers[0].paperId, r.w1); if (p1 && c2.layers[0]) c2.layers[0].paperId = p1.id; }
     if (r.w2 && c2.layers[1]) { var p2 = closestPaper(c2.layers[1].paperId, r.w2); if (p2) c2.layers[1].paperId = p2.id; }
     sync();
-    toast('已应用');
-    var hint = $('#adjustHint');
-    if (hint) {
-      hint.textContent = '已应用，可在下方改';
-      hint.style.color = 'var(--ac)';
-      setTimeout(function () { hint.textContent = '识别后在这里改'; hint.style.color = ''; }, 3500);
+    if (!quiet) {
+      toast('已应用');
+      var hint = $('#adjustHint');
+      if (hint) {
+        hint.textContent = '已应用，可在下方改';
+        hint.style.color = 'var(--ac)';
+        setTimeout(function () { hint.textContent = '识别后在这里改'; hint.style.color = ''; }, 3500);
+      }
     }
   }
 
@@ -4197,14 +4116,15 @@
     };
     $('#qOther').oninput = function () { state.quote.other = num(this.value); renderDoc(); save(); };
 
-    $('#btnOcr').onclick = renderOcr;
+    $('#btnOcr').onclick = applyOcr;
     $('#ocrText').oninput = function () { state.ocrText = this.value; save(); };
-    $('#ocrText').onkeydown = function (e) { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') renderOcr(); };
+    $('#ocrText').onkeydown = function (e) { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyOcr(); };
     $('#btnExample').onclick = function () {
       $('#ocrText').value = '10万只 9盎司广告杯，268克，双层，内层268外层248，内外都是金箔纸，烫金加压纹';
-      renderOcr();
+      state.ocrText = $('#ocrText').value; save();
+      applyOcr();
     };
-    $('#btnClearOcr').onclick = function () { $('#ocrText').value = ''; state.ocrText = ''; renderOcr(); save(); };
+    $('#btnClearOcr').onclick = function () { $('#ocrText').value = ''; state.ocrText = ''; save(); };
 
     $('#btnCopyText').onclick = function () { copyText(quoteText(), '文字已复制'); };
     $('#btnCopyImg').onclick = copyImg;
@@ -4366,7 +4286,7 @@
       });
       var sp2 = $('#specSelect2');
       if (sp2) { var row = sp2.closest('.field-row'); if (row) row.style.display = 'none'; }
-      ['#structureChips', '#paperLayers', '#liningRow'].forEach(function (sel) { var n = $(sel); if (n) n.style.display = 'none'; });
+      ['#structureRow', '#paperLayers', '#liningRow'].forEach(function (sel) { var n = $(sel); if (n) n.style.display = 'none'; });
     }
     $('#ocrText').value = state.ocrText || '';
     $('#qCustomer').value = state.quote.customer || '';
@@ -4386,7 +4306,6 @@
     });
     sync();
     if (isTea) renderTea();
-    if (state.ocrText) renderOcr();
 
     document.addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); copyImg(); }

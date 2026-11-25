@@ -158,8 +158,8 @@
             <button class="btn" id="btnOcr">识别</button>
             <button class="link" id="btnExample">示例</button>
             <button class="link" id="btnClearOcr">清空</button>
+            <span class="dim">识别后直接套用到下方「工艺 · 配置调整」，可随时改</span>
           </div>
-          <div id="ocrResult" class="ocr-out dim">识别结果会显示在这里</div>
         </div>
       </section>
 
@@ -215,8 +215,12 @@
             </label>
           </div>
 
-          <div class="sub">结构 <em id="structHint"></em></div>
-          <div class="chips" id="structureChips"></div>
+          <div class="field-row" id="structureRow">
+            <label class="fld grow">
+              <span>结构 <em id="structHint"></em></span>
+              <select id="structureSelect"></select>
+            </label>
+          </div>
 
           <div class="sub" id="paperLabel">纸张</div>
           <div id="paperLayers"></div>
@@ -232,14 +236,14 @@
             </label>
           </div>
 
-          <div class="sub">工艺 <em>可多选</em></div>
-          <div class="crafts" id="craftChips"></div>
+          <div class="sub">工艺 <em>可多选（直接点击即可增减）</em></div>
+          <select id="craftSelect" class="multi-sel" multiple size="5"></select>
 
           <div class="sub">开票 <em id="invoiceHint"></em></div>
-          <div class="chips" id="invoiceChips"></div>
+          <select id="invoiceSelect" class="sel-wide"></select>
 
           <div class="sub">运费方式</div>
-          <div class="chips" id="shippingChips"></div>
+          <select id="shippingSelect" class="sel-wide"></select>
           <div class="field-row" id="freightRow">
             <label class="fld grow"><span>运费金额（元）</span><input type="number" id="qFreight2" placeholder="0" min="0" step="1"></label>
             <label class="fld w120"><span>到付 / 现付</span>
