@@ -636,7 +636,7 @@ table.ct td.ops-cell { white-space: nowrap; }
 }
 .rop-del:hover { background: #fde8e8; color: #c0392b; }
 /* 报价页纸张只读摘要 */
-.paper-row .ptxt { font-size: 11.5px; color: var(--ink2); }
+.paper-row .ptxt { font-size: 11.5px; color: var(--ink2); flex: none; }
 #paperLayers .ptip { margin-top: 6px; font-size: 11px; }
 #paperLayers .ptip a { color: var(--ac); }
 /* 成本构成 */

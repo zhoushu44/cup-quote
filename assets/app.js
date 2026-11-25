@@ -788,7 +788,7 @@
     if (pl) pl.textContent = st.layers > 1 ? '纸张（内杯 / 外杯）' : '纸张';
   }
 
-  /* 报价页的纸张行：只读显示纸杯表配置，改配置去成本页 */
+  /* 报价页的纸张行：下拉直接换纸（每层各自选），拼版 / 损耗仍去成本页改 */
   function renderPapers() {
     var box = $('#paperLayers');
     if (!box) return;
@@ -800,12 +800,25 @@
       var p = paperById(L.paperId);
       var row = el('div', 'paper-row');
       row.appendChild(el('span', 'ptag', st.layers > 1 ? (i === 0 ? '内杯' : '外杯') : '杯身'));
-      var packN = num(L.pack) > 0 ? num(L.pack) : autoPack(sp, p, paperCfg());
-      row.appendChild(el('span', 'ptxt', p.name + ' ' + (num(p.gsm) || '—') + 'g ｜ 拼版 ' +
+      var sel = document.createElement('select');
+      sel.title = '换纸（要加新纸去成本页「纸」）';
+      // 纸名里已带克重（如「食品级杯纸 268g」）就不再重复拼
+      sel.innerHTML = (state.paperStock || []).map(function (m) {
+        var g = num(m.gsm) || 0;
+        var label = m.name + (g && String(m.name).indexOf(String(g)) < 0 ? ' ' + g + 'g' : '');
+        return '<option value="' + m.id + '"' + (L.paperId === m.id ? ' selected' : '') + '>' + esc(label) + '</option>';
+      }).join('');
+      sel.onchange = function () {
+        L.paperId = this.value;
+        save(); sync();
+      };
+      row.appendChild(sel);
+      var packN = num(L.pack) > 0 ? num(L.pack) : autoPack(sp, paperById(L.paperId), paperCfg());
+      row.appendChild(el('span', 'ptxt', '拼版 ' +
         (packN > 0 ? packN + (num(L.pack) > 0 ? '' : '（自动）') : '放不下') + ' ｜ 损耗 ' + (num(L.loss) || 0) + '%'));
       box.appendChild(row);
     });
-    var tip = el('div', 'ptip', '<a href="#" id="lnkCostPaper">去成本页改纸 / 拼版 / 损耗 →</a>');
+    var tip = el('div', 'ptip', '<a href="#" id="lnkCostPaper">去成本页改拼版 / 损耗 / 加新纸 →</a>');
     box.appendChild(tip);
     var a = $('#lnkCostPaper');
     if (a) a.onclick = function (e) {
