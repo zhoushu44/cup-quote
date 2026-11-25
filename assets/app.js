@@ -216,9 +216,9 @@
     if (g.indexOf('外贴') >= 0) return 'outer';
     return 'single';
   }
-  /* 在某材质族里挑克重最接近的一张纸 */
+  /* 在某材质族里挑克重最接近的「通用」纸（开料纸只给开料表里对应的杯型用，不参与自动匹配） */
   function paperInBase(base, wantGsm) {
-    var pool = (state.paperStock || []).filter(function (p) { return (p.base || p.id) === base; });
+    var pool = (state.paperStock || []).filter(function (p) { return (p.base || p.id) === base && p.gen; });
     if (!pool.length) return null;
     var best = null;
     pool.forEach(function (p) {
@@ -227,14 +227,20 @@
     });
     return best;
   }
-  /* 某个杯型默认用哪种纸：按材质族 + 该杯型常用克重（分层：内杯 / 外杯不同族） */
+  /* 开料表里该杯型该层用的纸：{ id, pack } 或纸 id；没有返回 null */
+  function sheetOf(sp, layerIdx) {
+    var e = ((D.specSheets || {})[sp.id] || [])[layerIdx || 0];
+    if (!e) return null;
+    return typeof e === 'string' ? { id: e } : e;
+  }
+
+  /* 某个杯型默认用哪种纸：开料表 → 材质族 + 该杯型常用克重（分层：内杯 / 外杯不同族） */
   function defaultPaperId(sp, layerIdx, structId) {
     var g = sp.group || '';
     var base = 'cupstock';
     if (g.indexOf('金箔') >= 0) base = 'gold';
     else if (g.indexOf('银箔') >= 0) base = 'silver';
     else if (g.indexOf('瓦楞') >= 0) base = 'corr';
-    else if (g.indexOf('纸桶') >= 0 || g.indexOf('纸碗') >= 0) base = 'kraft';
     var want = num(sp.defW) || 268;
     var st = structId || defaultStructId(sp);
     var idx = layerIdx || 0;
@@ -246,7 +252,11 @@
     } else if (base === 'silver') {
       base = 'cupstock';   // 外贴/银箔杯的内层是普通杯纸
     }
-    var p = paperInBase(base, want) || paperInBase('cupstock', want) || (state.paperStock || [])[0];
+    var pre = sheetOf(sp, idx);
+    var p0 = pre ? paperById(pre.id) : null;
+    if (pre && p0 && state.paperStock.some(function (x) { return x.id === p0.id; })) return p0.id;
+    var gens = (state.paperStock || []).filter(function (x) { return x.gen; });
+    var p = paperInBase(base, want) || paperInBase('cupstock', want) || gens[0] || (state.paperStock || [])[0];
     return p ? p.id : 'cupstock-268';
   }
 
@@ -282,7 +292,8 @@
     var st = structOf(sid);
     var layers = [];
     for (var i = 0; i < (st.layers || 1); i++) {
-      layers.push({ paperId: defaultPaperId(sp, i, sid), pack: 0, loss: cfg.lossDefault });
+      var pre = sheetOf(sp, i);
+      layers.push({ paperId: defaultPaperId(sp, i, sid), pack: pre && num(pre.pack) > 0 ? num(pre.pack) : 0, loss: cfg.lossDefault });
     }
     return { structure: sid, layers: layers, stash: [] };
   }
@@ -381,7 +392,8 @@
         base: p.base != null ? p.base : (p.id || ''),
         name: p.name || '未命名',
         len: num(p.len) || 787, wid: num(p.wid) || 1092,
-        gsm: num(p.gsm) || 268, price: num(p.price) || 0, desc: p.desc || ''
+        gsm: num(p.gsm) || 268, price: num(p.price) || 0, desc: p.desc || '',
+        gen: !!p.gen
       };
     });
     // 纸杯配置（每个杯型一套）
@@ -404,7 +416,7 @@
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
-        specId: state.specId, cupPaper: state.cupPaper,
+        specId: state.specId, cupPaper: state.cupPaper, stockV: 2,
         lining: state.lining, qty: state.qty, crafts: state.crafts,
         plateAmort: state.plateAmort, urgent: state.urgent, quoteTier: state.quoteTier,
         quote: state.quote, gradients: state.gradients,
@@ -489,6 +501,17 @@
       }
       if (o.lead) state.lead = Object.assign(state.lead, o.lead);
       if (o.params) Object.assign(state.params, o.params);
+      // 旧存档迁移（纸库换成开料表）：旧纸张 id 已不存在 → 换新纸库、纸杯配置按开料表重建；
+      // 纸碗 / 纸桶 已下线，自建的也一并去掉。迁移后写上 stockV，下次不再触发
+      if (o.stockV !== 2) {
+        state.paperStock = JSON.parse(JSON.stringify(D.paperStock || []));
+        state.cupPaper = {};
+        state.customSpecs = (state.customSpecs || []).filter(function (s) { return !/纸桶|纸碗/.test(s.group || ''); });
+        state.specOrder = (state.specOrder || []).filter(function (id) { return allSpecs().some(function (s) { return s.id === id; }); });
+        save();
+      }
+      // 当前杯型已不存在（如纸碗纸桶）→ 回到第一个
+      if (!allSpecs().some(function (s) { return s.id === state.specId; })) state.specId = (allSpecs()[0] || {}).id;
     } catch (e) {}
   }
 
@@ -2595,13 +2618,18 @@
     }
     var mi = hasInner ? pick(hasInner[0]) : null;
     var mo = hasOuter ? pick(hasOuter[0]) : null;
-    if (mi) mats.push(mi);
-    if (mo) mats.push(mo);
-    if (!mats.length) {
-      // 全文中出现多个材质时按顺序取
-      ['gold','silver','kraft','corr','coated','white'].forEach(function (k) {
-        if (MAT_ALIAS[k].test(raw) && mats.indexOf(k) < 0) mats.push(k);
+    // mats 按层位放：[内层, 外层]；null = 这层不改
+    if (mi || mo) {
+      mats = [mi || null, mo || null];
+    } else {
+      var found = [];
+      ['gold','silver','corr','white','coated','kraft'].forEach(function (k) {
+        if (MAT_ALIAS[k].test(raw) && found.indexOf(k) < 0) found.push(k);
       });
+      if (found.length) {
+        // 没写内外层：单层杯材质就是杯身；多层杯说的通常是外面那层（金箔、瓦楞），第二个材质给内层
+        mats = struct === 'single' ? [found[0]] : [found[1] || null, found[0]];
+      }
     }
 
     // 淋膜
@@ -2829,16 +2857,25 @@
     n.classList.toggle('dim', !hasCust);
   }
 
-  /* 在同材质族里找克重最接近的纸 */
+  /* 在同材质族里找克重最接近的纸
+     只在同一开料尺寸里换克重；这个尺寸没有要的克重时退到「通用」整张纸，
+     不会把别的杯型的开料纸配过来 */
   function closestPaper(paperId, gsm) {
-    var base = (paperById(paperId) || {}).base;
+    var cur = paperById(paperId) || {};
+    var base = cur.base;
     if (!base) return null;          // 没有材质族就不要跨族乱配
     var want = num(gsm);
+    var pool = (state.paperStock || []).filter(function (p) {
+      if ((p.base || p.id) !== base) return false;
+      return (num(p.len) === num(cur.len) && num(p.wid) === num(cur.wid)) || p.gen;
+    });
     var best = null;
-    (state.paperStock || []).forEach(function (p) {
-      if ((p.base || p.id) !== base) return;
-      if (!best) best = p;
-      else if (Math.abs(num(p.gsm) - want) < Math.abs(num(best.gsm) - want)) best = p;
+    pool.forEach(function (p) {
+      var sameSize = num(p.len) === num(cur.len) && num(p.wid) === num(cur.wid);
+      var bSame = best && num(best.len) === num(cur.len) && num(best.wid) === num(cur.wid);
+      // 先比是不是同一开料尺寸（同尺寸优先），再比克重差距
+      if (!best || (sameSize && !bSame) ||
+          (sameSize === bSame && Math.abs(num(p.gsm) - want) < Math.abs(num(best.gsm) - want))) best = p;
     });
     return best;
   }
@@ -2852,7 +2889,13 @@
 
     var c2 = cupCfg(sp);
     if (r.mats && r.mats.length) {
-      c2.layers.forEach(function (L, i) { if (r.mats[i]) L.paperId = r.mats[i]; });
+      // 材质是族名（gold / white …）→ 换成该族里克重最接近的「通用」纸；对不上就保持原纸
+      c2.layers.forEach(function (L, i) {
+        var m = r.mats[i];
+        if (!m) return;
+        var mp = paperInBase(m, num(paperById(L.paperId).gsm) || num(sp.defW) || 268);
+        if (mp) L.paperId = mp.id;
+      });
     }
     if (r.w1) { var p1 = closestPaper(c2.layers[0] && c2.layers[0].paperId, r.w1); if (p1 && c2.layers[0]) c2.layers[0].paperId = p1.id; }
     if (r.w2 && c2.layers[1]) { var p2 = closestPaper(c2.layers[1].paperId, r.w2); if (p2) c2.layers[1].paperId = p2.id; }
@@ -4399,7 +4442,7 @@
 
     $('#btnExportAll').onclick = function () {
       saveBlob(new Blob([JSON.stringify({
-        v: 5, gradients: state.gradients,
+        v: 5, stockV: 2, gradients: state.gradients,
         paper: state.paper, paperStock: state.paperStock, cupPaper: state.cupPaper, proc: state.proc,
         craftGrid: state.craftGrid, addon: state.addon,
         specOrder: state.specOrder, craftOrder: state.craftOrder, teaState: state.tea,
@@ -4420,8 +4463,9 @@
           var o = JSON.parse(fr.result);
           if (o.gradients) state.gradients = o.gradients;
           if (o.paper) state.paper = o.paper;
-          if (o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
-          state.cupPaper = o.cupPaper || {};
+          // 旧备份（纸库还是整张纸）：纸张 id 已对不上，纸杯配置按开料表重建，纸库用当前的
+          if (o.stockV === 2 && o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
+          state.cupPaper = o.stockV === 2 ? (o.cupPaper || {}) : {};
           if (o.proc) state.proc = o.proc;
           if (o.craftGrid) state.craftGrid = o.craftGrid;
           if (o.addon) state.addon = o.addon;
@@ -4437,7 +4481,7 @@
           if (o.boxCfg) state.boxCfg = o.boxCfg;
           if (o.shipZones) state.shipZones = o.shipZones;
           if (o.shipGrid) state.shipGrid = o.shipGrid;
-          if (o.customSpecs) state.customSpecs = o.customSpecs;
+          if (o.customSpecs) state.customSpecs = o.customSpecs.filter(function (s) { return !/纸桶|纸碗/.test(s.group || ''); });
           if (o.customCrafts) state.customCrafts = o.customCrafts;
           if (o.specOrder) state.specOrder = o.specOrder;
           if (o.craftOrder) state.craftOrder = o.craftOrder;
