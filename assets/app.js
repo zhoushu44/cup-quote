@@ -173,15 +173,24 @@
     return Math.PI * (r1 + r2) * slant * cfg.flange;
   }
 
-  /* 一张纸能排多少片扇片：方排，两向取优（用该纸自己的长宽） */
-  function autoPack(sp, paper, cfg) {
+  /* 一张纸能排多少片：相邻两片一正一倒相扣（错缝），按真实生产拼数反推的规律
+       横向节距 =（上口周长 + 下口周长）÷ 2，第一片占整个上口周长
+       每行高度：内层（带杯底的扇片）= 斜高 + 卷边余量（默认 14mm）；外层（中空外筒 / 外贴面纸）= 斜高
+     li = 第几层（0 = 内层）。两个方向都排一遍取大 */
+  function autoPack(sp, paper, cfg, li) {
     cfg = cfg || paperCfg();
-    var fan = fanBlank(sp, cfg);
     var L = num(paper && paper.len) || 787, W = num(paper && paper.wid) || 1092;
-    if (!(fan.w > 0) || !(fan.h > 0)) return 0;
-    var a = Math.floor(L / fan.w) * Math.floor(W / fan.h);
-    var b = Math.floor(L / fan.h) * Math.floor(W / fan.w);
-    return Math.max(a, b);
+    var tw = Math.PI * num(sp.top), bw = Math.PI * num(sp.bottom);
+    if (!(tw > 0) || !(bw > 0)) return 0;
+    var avg = (tw + bw) / 2;
+    var rowH = Math.hypot(num(sp.height), (num(sp.top) - num(sp.bottom)) / 2) +
+      (li > 0 ? 0 : (num(state.paper.fanRowExtra) || 14));
+    if (!(rowH > 0)) return 0;
+    function one(A, B) {
+      var cols = A >= tw ? 1 + Math.floor((A - tw) / avg) : 0;
+      return cols * Math.floor(B / rowH);
+    }
+    return Math.max(one(L, W), one(W, L));
   }
 
   /* 杯底圆片直径 mm */
@@ -290,7 +299,7 @@
       var p = paperById(L.paperId);
       var gsm = num(p.gsm) || 268;
       var loss = clamp(num(L.loss), 0, 90) / 100;
-      var pack = num(L.pack) > 0 ? Math.round(num(L.pack)) : autoPack(sp, p, cfg);
+      var pack = num(L.pack) > 0 ? Math.round(num(L.pack)) : autoPack(sp, p, cfg, i);
       var eff = pack > 0 ? Math.max(0.05, pack * (1 - loss)) : 0;
       if (pack <= 0) noFit = true;
       var sheetArea = (num(p.len) || 787) / 1000 * (num(p.wid) || 1092) / 1000;
@@ -813,7 +822,7 @@
         save(); sync();
       };
       row.appendChild(sel);
-      var packN = num(L.pack) > 0 ? num(L.pack) : autoPack(sp, paperById(L.paperId), paperCfg());
+      var packN = num(L.pack) > 0 ? num(L.pack) : autoPack(sp, paperById(L.paperId), paperCfg(), i);
       row.appendChild(el('span', 'ptxt', '拼版 ' +
         (packN > 0 ? packN + (num(L.pack) > 0 ? '' : '（自动）') : '放不下') + ' ｜ 损耗 ' + (num(L.loss) || 0) + '%'));
       box.appendChild(row);
@@ -3038,7 +3047,7 @@
           return '<option value="' + p.id + '"' + (p.id === L.paper.id ? ' selected' : '') + '>' +
             esc(p.name) + '（' + (num(p.gsm) || '—') + 'g）</option>';
         }).join('');
-        var autoPackN = autoPack(s, L.paper, cfg);
+        var autoPackN = autoPack(s, L.paper, cfg, L.i);
         rows.push('<tr class="layerrow">' +
           '<td class="dim" colspan="3"></td>' +
           '<td class="dim">' + (L.i === 0 ? '内杯' : '外杯') + '</td>' +
