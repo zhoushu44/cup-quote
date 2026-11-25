@@ -170,6 +170,16 @@ table.ct td.box-cell {
   max-width: 230px; line-height: 1.4;
 }
 
+/* ---------- 客户摘要条 ---------- */
+.cust-bar {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 6px 9px; margin-bottom: 8px; border-radius: 6px;
+  background: var(--line2); font-size: 11.5px; color: var(--ink2);
+}
+.cust-bar:hover { background: var(--ac-soft); }
+.cust-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cust-go { flex: none; color: var(--ac); font-size: 11px; }
+
 /* ---------- 结构 ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .chips button {

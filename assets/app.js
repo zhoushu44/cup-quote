@@ -68,7 +68,8 @@
     addon: {},               // 历史字段，已不用（结构工费随选纸自动计）
     params: JSON.parse(JSON.stringify(D.params)),
     lead: JSON.parse(JSON.stringify(D.leadTime)),
-    ocrText: ''
+    ocrText: '',
+    custOcrText: ''
   };
 
   /* 单杯克重：手填实测优先，没填就用纸杯表自动算 */
@@ -403,7 +404,7 @@
         shipGrid: state.shipGrid, wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, customSpecs: state.customSpecs, customCrafts: state.customCrafts, specOrder: state.specOrder, craftOrder: state.craftOrder,
         invoice: state.invoice, shipping: state.shipping, freightPay: state.freightPay,
         mode: state.mode, tea: state.tea,
-        params: state.params, ocrText: state.ocrText
+        params: state.params, ocrText: state.ocrText, custOcrText: state.custOcrText
       }));
       $('#saveState').textContent = '已保存';
     } catch (e) {}
@@ -415,7 +416,7 @@
     if (!raw) return;
     try {
       var o = JSON.parse(raw);
-      ['specId', 'lining', 'qty', 'crafts', 'ocrText'].forEach(function (k) {
+      ['specId', 'lining', 'qty', 'crafts', 'ocrText', 'custOcrText'].forEach(function (k) {
         if (o[k] != null) state[k] = o[k];
       });
       ['plateAmort', 'urgent'].forEach(function (k) { if (typeof o[k] === 'boolean') state[k] = o[k]; });
@@ -1468,6 +1469,7 @@
   }
 
   function renderDoc() {
+    renderCustSummary();
     var q = buildQuote();
     var s = q.spec;
     var c = q.company;
@@ -2659,6 +2661,152 @@
     toast(tips.length ? '已套用（' + tips.join('、') + '）' : '已识别并套用到报价');
   }
 
+  /* ---------------- 客户信息弹窗（含文字识别） ---------------- */
+  var custDraft = null;
+  var PROV_RE = '北京|天津|上海|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|内蒙古|广西|西藏|宁夏|新疆|台湾|香港|澳门';
+
+  /* 从一段文字里抠客户信息（带标签优先，其次按特征猜） */
+  function parseCustomer(raw) {
+    var t = String(raw || '').replace(/\u3000/g, ' ').trim();
+    var out = { customer: '', contact: '', taxNo: '', addr: '', province: '', freight: null };
+    var grab = function (re) {
+      var m = t.match(re);
+      return m && m[1] ? String(m[1]).trim() : '';
+    };
+    // 公司：带标签优先，其次按后缀猜（猜之前先把标签词抹掉，免得被吃进公司名）
+    out.customer = grab(/(?:客户名称|客户单位|公司名称|单位名称|客户|公司|单位|抬头)[：:]\s*([^\n，,。；;]{2,40})/);
+    if (!out.customer) {
+      // 只抹字段词；「公司/客户/单位」可能是公司名的一部分，只在带冒号时才抹
+      var t2 = t.replace(/(?:客户名称|客户单位|公司名称|单位名称|客户|公司|单位|抬头)[：:]\s*|(?:联系人|收货人|对接人|收件人|客户联系人|税号|纳税人识别号|统一社会信用代码|地址|收货地址|开票地址|运费|物流费|快递费)[：:]?\s*/g, ' ');
+      var cm = t2.match(new RegExp('([\\u4e00-\\u9fa5A-Za-z0-9（）()]{2,30}(?:股份有限公司|有限责任公司|有限公司|集团|公司|包装厂|纸杯厂|印刷厂|厂|商行|经营部|工作室))'));
+      if (cm) out.customer = cm[1].trim();
+    }
+    // 联系人 = 姓名 + 电话（冒号可有可无；没标签时取电话前面紧挨着的 2~4 个汉字）
+    var name = grab(/(?:联系人|收货人|对接人|收件人|客户联系人)[：:]?\s*([\u4e00-\u9fa5]{1,4})/) ||
+      grab(/([\u4e00-\u9fa5]{2,4})\s*(?:先生|女士|经理)?\s*1[3-9]\d{9}/);
+    var phone = grab(/(1[3-9]\d{9})/) || grab(/(0\d{2,3}[-\s]?\d{7,8})/);
+    out.contact = [name, phone].filter(Boolean).join(' ');
+    // 税号（18 位统一社会信用代码，排除纯数字电话）
+    out.taxNo = grab(/(?:税号|纳税人识别号|统一社会信用代码)[：:]\s*([0-9A-Za-z]{15,20})/) ||
+      grab(/([0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10})/);
+    // 地址：带标签优先（到逗号/分号为止），其次找含省市路号的片段
+    out.addr = grab(/(?:收货地址|开票地址|地址)[：:]\s*([^\n；;，,]{4,60})/);
+    if (!out.addr) {
+      var m = t.match(new RegExp('((?:' + PROV_RE + ')[^\\n，,。；;]{4,60}?(?:路|街|道|号|镇|村|区|县|市)[^\\n，,。；;]{0,20})'));
+      if (m) out.addr = m[1].trim();
+    }
+    // 省份：地址开头的省优先，其次全文第一个省名
+    var pm = out.addr ? out.addr.match(new RegExp('^(' + PROV_RE + ')')) : null;
+    out.province = pm ? pm[1] : grab(new RegExp('(' + PROV_RE + ')'));
+    // 运费
+    var f = grab(/(?:运费|物流费|快递费|运费金额)[：:]?\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)/);
+    if (f) out.freight = num(f);
+    return out;
+  }
+
+  function fillCustInputs() {
+    var d = custDraft || {};
+    var set = function (sel, v) { var n = $(sel); if (n) n.value = v == null ? '' : v; };
+    set('#qCustomer', d.customer || '');
+    set('#qTaxNo', d.taxNo || '');
+    set('#qContact', d.contact || '');
+    set('#qAddr', d.addr || '');
+    set('#qProvince', d.province || '');
+    set('#qDate', d.date || today());
+    set('#qFreight', num(d.freight) ? d.freight : '');
+  }
+
+  function openCustModal() {
+    custDraft = {
+      customer: state.quote.customer || '',
+      taxNo: state.quote.buyerTaxNo || '',
+      contact: state.quote.contact || '',
+      addr: state.quote.buyerAddr || '',
+      province: state.quote.province || '',
+      date: state.quote.date || today(),
+      freight: num(state.quote.freight) || 0
+    };
+    fillCustInputs();
+    var tip = $('#custOcrTip');
+    if (tip) { tip.textContent = '识别后回填到下面，可再改'; tip.style.color = ''; }
+    var ta = $('#custOcrText');
+    if (ta) ta.value = state.custOcrText || '';
+    var m = $('#custModal');
+    if (m) m.classList.add('on');
+    setTimeout(function () { if ($('#qCustomer')) $('#qCustomer').focus(); }, 80);
+  }
+
+  function closeCustModal() {
+    var m = $('#custModal');
+    if (m) m.classList.remove('on');
+    custDraft = null;
+  }
+
+  /* 弹窗里点「识别」：只回填到弹窗，不直接写报价单 */
+  function applyCustOcr() {
+    var ta = $('#custOcrText');
+    var raw = ta ? ta.value : '';
+    if (!String(raw).trim()) { toast('先粘贴客户信息文字'); if (ta) ta.focus(); return; }
+    state.custOcrText = raw; save();
+    var r = parseCustomer(raw);
+    if (!custDraft) custDraft = {};
+    if (r.customer) custDraft.customer = r.customer;
+    if (r.contact) custDraft.contact = r.contact;
+    if (r.taxNo) custDraft.taxNo = r.taxNo;
+    if (r.addr) custDraft.addr = r.addr;
+    if (r.province) custDraft.province = r.province;
+    if (r.freight != null) custDraft.freight = r.freight;
+    fillCustInputs();
+    var got = [];
+    if (r.customer) got.push('公司');
+    if (r.contact) got.push('联系人');
+    if (r.taxNo) got.push('税号');
+    if (r.addr) got.push('地址');
+    if (r.province) got.push('省份');
+    if (r.freight != null) got.push('运费');
+    var tip = $('#custOcrTip');
+    if (got.length) {
+      if (tip) { tip.textContent = '✓ 识别到：' + got.join(' / ') + '，核对后点「确定，保存到报价单」'; tip.style.color = 'var(--ac)'; }
+      toast('已识别 ' + got.length + ' 项，确认后保存');
+    } else {
+      if (tip) { tip.textContent = '⚠ 没认出内容，请手动填或换个说法'; tip.style.color = '#b45309'; }
+    }
+  }
+
+  /* 点「确定」：草稿写入报价单 */
+  function confirmCust() {
+    var d = custDraft || {};
+    state.quote.customer = String(d.customer || '').trim();
+    state.quote.buyerTaxNo = String(d.taxNo || '').trim();
+    state.quote.contact = String(d.contact || '').trim();
+    state.quote.buyerAddr = String(d.addr || '').trim();
+    state.quote.province = d.province || '';
+    state.quote.date = d.date || today();
+    state.quote.freight = num(d.freight) || 0;
+    if ($('#qFreight2')) $('#qFreight2').value = state.quote.freight || '';
+    renderCustSummary(); renderShipQuote(); renderDoc(); save();
+    closeCustModal();
+    toast('客户信息已保存到报价单');
+  }
+
+  /* 报价单上方的客户摘要 */
+  function renderCustSummary() {
+    var n = $('#custSummary');
+    if (!n) return;
+    var q = state.quote, parts = [];
+    if (q.customer) parts.push(q.customer);
+    if (q.contact) parts.push(q.contact);
+    if (q.buyerTaxNo) parts.push('税号 ' + q.buyerTaxNo);
+    if (q.buyerAddr) parts.push(q.buyerAddr);
+    if (q.province) parts.push(q.province);
+    if (num(q.freight)) parts.push('运费 ¥' + fq(q.freight));
+    // 只有日期不算填过客户，避免摘要里孤零零一个日期
+    var hasCust = parts.length > 0;
+    if (hasCust && q.date) parts.push(q.date);
+    n.textContent = hasCust ? parts.join(' ｜ ') : '未填写客户信息（点右侧「客户」填写）';
+    n.classList.toggle('dim', !hasCust);
+  }
+
   /* 在同材质族里找克重最接近的纸 */
   function closestPaper(paperId, gsm) {
     var base = (paperById(paperId) || {}).base;
@@ -2699,47 +2847,50 @@
   }
 
   /* ---------------- 成本页 ---------------- */
+  /* 数量档位（只）：加工页与工艺页共用同一套档位，所有 [data-grad-list] 容器同步渲染 */
   function renderGradients() {
-    var box = $('#gradList');
-    if (!box) return;
-    box.innerHTML = '';
-    state.gradients.forEach(function (g, i) {
-      var item = el('div', 'grad-item');
-      var inp = document.createElement('input');
-      inp.type = 'number'; inp.value = g; inp.min = 1; inp.step = 100;
-      inp.onchange = function () {
-        state.gradients[i] = Math.max(1, Math.round(num(inp.value)));
-        save(); renderProcTable(); sync();
-      };
-      var del = el('button', 'del', '×');
-      del.title = '删除该梯度';
-      del.onclick = function () {
-        if (state.gradients.length <= 1) { toast('至少保留一档'); return; }
-        state.gradients.splice(i, 1);
-        ['make', 'print'].forEach(function (k) { if (state.proc[k]) state.proc[k].splice(i, 1); });
-        D.crafts.forEach(function (c) { if (state.craftGrid[c.id]) state.craftGrid[c.id].splice(i, 1); });
+    var boxes = $$('[data-grad-list]');
+    if (!boxes.length) return;
+    boxes.forEach(function (box) {
+      box.innerHTML = '';
+      state.gradients.forEach(function (g, i) {
+        var item = el('div', 'grad-item');
+        var inp = document.createElement('input');
+        inp.type = 'number'; inp.value = g; inp.min = 1; inp.step = 100;
+        inp.onchange = function () {
+          state.gradients[i] = Math.max(1, Math.round(num(inp.value)));
+          save(); renderGradients(); renderProcTable(); renderCraftTable(); sync();
+        };
+        var del = el('button', 'del', '×');
+        del.title = '删除该梯度';
+        del.onclick = function () {
+          if (state.gradients.length <= 1) { toast('至少保留一档'); return; }
+          state.gradients.splice(i, 1);
+          ['make', 'print'].forEach(function (k) { if (state.proc[k]) state.proc[k].splice(i, 1); });
+          allCrafts().forEach(function (c) { if (state.craftGrid[c.id]) state.craftGrid[c.id].splice(i, 1); });
+          save(); renderGradients(); renderProcTable(); renderCraftTable(); sync();
+        };
+        item.appendChild(inp); item.appendChild(del);
+        box.appendChild(item);
+      });
+
+      var add = el('button', 'add', '+ 加一档');
+      add.onclick = function () {
+        var last = state.gradients[state.gradients.length - 1] || 1000;
+        var next = Math.round(last * 2 / 100) * 100;
+        state.gradients.push(next);
+        ['make', 'print'].forEach(function (k) {
+          if (!state.proc[k]) state.proc[k] = [];
+          state.proc[k].push(state.proc[k][state.proc[k].length - 1] || suggestProc(k, next));
+        });
+        allCrafts().forEach(function (c) {
+          if (!state.craftGrid[c.id]) state.craftGrid[c.id] = [];
+          state.craftGrid[c.id].push(state.craftGrid[c.id][state.craftGrid[c.id].length - 1] || c.prices[1]);
+        });
         save(); renderGradients(); renderProcTable(); renderCraftTable(); sync();
       };
-      item.appendChild(inp); item.appendChild(del);
-      box.appendChild(item);
+      box.appendChild(add);
     });
-
-    var add = el('button', 'add', '+ 加一档');
-    add.onclick = function () {
-      var last = state.gradients[state.gradients.length - 1] || 1000;
-      var next = Math.round(last * 2 / 100) * 100;
-      state.gradients.push(next);
-      ['make', 'print'].forEach(function (k) {
-        if (!state.proc[k]) state.proc[k] = [];
-        state.proc[k].push(state.proc[k][state.proc[k].length - 1] || suggestProc(k, next));
-      });
-      D.crafts.forEach(function (c) {
-        if (!state.craftGrid[c.id]) state.craftGrid[c.id] = [];
-        state.craftGrid[c.id].push(state.craftGrid[c.id][state.craftGrid[c.id].length - 1] || c.prices[1]);
-      });
-      save(); renderGradients(); renderProcTable(); renderCraftTable(); sync();
-    };
-    box.appendChild(add);
   }
 
   /* ---------------- 纸 / 纸杯（核心） ---------------- */
@@ -4104,16 +4255,38 @@
       $('#quoteTierSel').onchange = function () { state.quoteTier = +this.value; sync(); };
     }
 
-    $('#qCustomer').oninput = function () { state.quote.customer = this.value; renderDoc(); save(); };
-    $('#qContact').oninput = function () { state.quote.contact = this.value; renderDoc(); save(); };
-    if ($('#qTaxNo')) $('#qTaxNo').oninput = function () { state.quote.buyerTaxNo = this.value; renderDoc(); save(); };
-    if ($('#qAddr')) $('#qAddr').oninput = function () { state.quote.buyerAddr = this.value; renderDoc(); save(); };
-    $('#qDate').onchange = function () { state.quote.date = this.value; renderDoc(); save(); };
-    $('#qFreight').oninput = function () {
-      state.quote.freight = num(this.value);
-      if ($('#qFreight2')) $('#qFreight2').value = this.value;
-      renderDoc(); save();
+    /* 客户信息：弹窗内编辑草稿，点「确定」才写入报价单 */
+    [['#qCustomer', 'customer'], ['#qTaxNo', 'taxNo'], ['#qContact', 'contact'], ['#qAddr', 'addr']].forEach(function (p) {
+      var n = $(p[0]);
+      if (!n) return;
+      n.oninput = function () { if (custDraft) custDraft[p[1]] = this.value; };
+    });
+    if ($('#qProvince')) $('#qProvince').onchange = function () { if (custDraft) custDraft.province = this.value; };
+    if ($('#qDate')) $('#qDate').onchange = function () { if (custDraft) custDraft.date = this.value; };
+    if ($('#qFreight')) $('#qFreight').oninput = function () { if (custDraft) custDraft.freight = num(this.value); };
+
+    if ($('#btnCustomer')) $('#btnCustomer').onclick = openCustModal;
+    if ($('#custBar')) $('#custBar').onclick = openCustModal;
+    if ($('#btnCustClose')) $('#btnCustClose').onclick = closeCustModal;
+    if ($('#btnCustCancel')) $('#btnCustCancel').onclick = closeCustModal;
+    if ($('#btnCustOk')) $('#btnCustOk').onclick = confirmCust;
+    if ($('#btnCustOcr')) $('#btnCustOcr').onclick = applyCustOcr;
+    if ($('#custOcrText')) {
+      $('#custOcrText').oninput = function () { state.custOcrText = this.value; save(); };
+      $('#custOcrText').onkeydown = function (e) { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyCustOcr(); };
+    }
+    if ($('#btnCustOcrClear')) $('#btnCustOcrClear').onclick = function () {
+      if ($('#custOcrText')) $('#custOcrText').value = '';
+      state.custOcrText = ''; save();
+      var tip = $('#custOcrTip');
+      if (tip) { tip.textContent = '识别后回填到下面，可再改'; tip.style.color = ''; }
     };
+    // 点遮罩空白处关闭
+    ['#custModal', '#specModal', '#contractModal'].forEach(function (sel) {
+      var m = $(sel);
+      if (!m) return;
+      m.addEventListener('mousedown', function (e) { if (e.target === m) m.classList.remove('on'); });
+    });
     $('#qOther').oninput = function () { state.quote.other = num(this.value); renderDoc(); save(); };
 
     $('#btnOcr').onclick = applyOcr;
@@ -4168,6 +4341,7 @@
         if (t === 'stock') { renderPaperCfg(); renderMaterialTable(); }
         if (t === 'cup') { renderPaperTable(); }
         if (t === 'proc') { renderGradients(); renderProcTable(); }
+        if (t === 'craft') { renderGradients(); renderCraftTable(); }
         if (t === 'weight') renderWeightTable();
         if (t === 'teaweight') renderTeaWeight();
       };
@@ -4289,12 +4463,14 @@
       ['#structureRow', '#paperLayers', '#liningRow'].forEach(function (sel) { var n = $(sel); if (n) n.style.display = 'none'; });
     }
     $('#ocrText').value = state.ocrText || '';
-    $('#qCustomer').value = state.quote.customer || '';
-    $('#qContact').value = state.quote.contact || '';
+    if ($('#custOcrText')) $('#custOcrText').value = state.custOcrText || '';
+    if ($('#qCustomer')) $('#qCustomer').value = state.quote.customer || '';
+    if ($('#qContact')) $('#qContact').value = state.quote.contact || '';
     if ($('#qTaxNo')) $('#qTaxNo').value = state.quote.buyerTaxNo || '';
     if ($('#qAddr')) $('#qAddr').value = state.quote.buyerAddr || '';
-    $('#qDate').value = state.quote.date || today();
-    $('#qFreight').value = state.quote.freight || '';
+    if ($('#qDate')) $('#qDate').value = state.quote.date || today();
+    if ($('#qFreight')) $('#qFreight').value = state.quote.freight || '';
+    renderCustSummary();
     $('#qOther').value = state.quote.other || '';
     if ($('#qFreight2')) $('#qFreight2').value = state.quote.freight || '';
     if ($('#freightPay')) $('#freightPay').value = state.freightPay || 'prepaid';

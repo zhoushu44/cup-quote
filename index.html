@@ -173,6 +173,7 @@
               <option value="1">按标准价</option>
               <option value="2">按品牌价</option>
             </select>
+            <button class="link" id="btnCustomer">客户</button>
             <button class="link" id="btnCopyText">复制文字</button>
             <button class="link" id="btnCopyImg">复制图片</button>
             <button class="link" id="btnSaveImg">下载图片</button>
@@ -181,16 +182,9 @@
           </div>
         </div>
         <div class="box-body">
-          <div class="field-row compact">
-            <label class="fld grow"><span>客户公司</span><input type="text" id="qCustomer" placeholder="客户公司名称"></label>
-            <label class="fld grow"><span>客户税号</span><input type="text" id="qTaxNo" placeholder="纳税人识别号（可空）" maxlength="20"></label>
-          </div>
-          <div class="field-row compact">
-            <label class="fld grow"><span>联系人</span><input type="text" id="qContact" placeholder="姓名 电话"></label>
-            <label class="fld grow"><span>客户地址</span><input type="text" id="qAddr" placeholder="开票/收货地址（可空）"></label>
-            <label class="fld w110"><span>收货省份</span><select id="qProvince"><option value="">未选</option></select></label>
-            <label class="fld w110"><span>日期</span><input type="date" id="qDate"></label>
-            <label class="fld w80"><span>运费</span><input type="number" id="qFreight" placeholder="0" min="0"></label>
+          <div class="cust-bar" id="custBar" title="点这里填 / 改客户信息">
+            <span class="cust-sum dim" id="custSummary">未填写客户信息（点右侧「客户」填写）</span>
+            <span class="cust-go">客户信息 ›</span>
           </div>
           <div class="doc" id="quoteDoc"></div>
         </div>
@@ -344,16 +338,23 @@
       <div class="card" id="costTabProc" style="display:none">
         <div class="grad-head">
           <span class="grad-label">数量档位（只）</span>
-          <div class="grad-list" id="gradList"></div>
+          <div class="grad-list" data-grad-list></div>
         </div>
         <div class="scroll"><table class="ct" id="procTable"></table></div>
-        <p class="tip">加工费是<b>除纸以外</b>的单价成本，随数量递减（开机损耗摊薄）。纸的成本在「纸」「纸杯」页按层算（单层一层、双层两层），不在这里重复计。</p>
+        <p class="tip">加工费是<b>除纸以外</b>的单价成本，随数量递减（开机损耗摊薄）。纸的成本在「纸」「纸杯」页按层算（单层一层、双层两层），不在这里重复计。档位与「工艺」页共用。</p>
       </div>
 
       <div class="card" id="costTabCraft" style="display:none">
+        <div class="grad-head">
+          <span class="grad-label">数量档位（只）</span>
+          <div class="grad-list" data-grad-list></div>
+        </div>
         <div class="scroll"><table class="ct" id="craftCostTable"></table></div>
         <div style="padding:6px 4px 0"><button class="link" id="btnAddCraft">＋ 添加工艺</button><span class="dim" style="margin-left:8px;font-size:10.5px">自定义工艺可删除、上下移动</span></div>
-        <p class="tip">工艺按只加价，版费一次性。</p>
+        <p class="tip">
+          工艺按只加价，版费一次性。<br>
+          <b>数量档位（只）</b>：与「加工」页共用同一套档位，改这里两边同时变；每个格子填该数量档位下的<b>单只加价</b>（元），报价时按数量自动插值取价。
+        </p>
       </div>
 
       <!-- 茶叶杯 重量·箱规 -->
@@ -528,6 +529,43 @@
 <div id="toast"></div>
 
 <!-- 添加杯型弹窗 -->
+<!-- 客户信息：弹窗（含文字识别） -->
+<div class="modal-mask" id="custModal">
+  <div class="modal" style="width:560px">
+    <div class="modal-head">
+      <h3>客户信息</h3>
+      <button class="modal-x" id="btnCustClose">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-tip">粘贴客户微信原话，点「识别」自动回填公司 / 联系人 / 电话 / 税号 / 地址 / 运费。确定后写入报价单。</p>
+      <textarea id="custOcrText" class="ta" style="min-height:64px" placeholder="例：上海某某包装有限公司，联系人张三 13800138000，税号 91310000MA1K35XY7N，地址：上海市嘉定区某某路88号，运费300元"></textarea>
+      <div class="btn-row" style="margin:6px 0 12px">
+        <button class="btn" id="btnCustOcr">识别</button>
+        <button class="link" id="btnCustOcrClear">清空</button>
+        <span class="dim" id="custOcrTip">识别后回填到下面，可再改</span>
+      </div>
+
+      <div class="mf2">
+        <div class="mf"><label>客户公司</label><input type="text" id="qCustomer" placeholder="客户公司名称"></div>
+        <div class="mf"><label>客户税号</label><input type="text" id="qTaxNo" placeholder="纳税人识别号（可空）" maxlength="20"></div>
+      </div>
+      <div class="mf2">
+        <div class="mf"><label>联系人</label><input type="text" id="qContact" placeholder="姓名 电话"></div>
+        <div class="mf"><label>客户地址</label><input type="text" id="qAddr" placeholder="开票 / 收货地址（可空）"></div>
+      </div>
+      <div class="mf3">
+        <div class="mf"><label>收货省份</label><select id="qProvince"><option value="">未选</option></select></div>
+        <div class="mf"><label>日期</label><input type="date" id="qDate"></div>
+        <div class="mf"><label>运费（元）</label><input type="number" id="qFreight" placeholder="0" min="0"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-ghost" id="btnCustCancel">取消</button>
+      <button class="btn" id="btnCustOk">确定，保存到报价单</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="specModal">
   <div class="modal" style="width:400px">
     <div class="modal-head">
