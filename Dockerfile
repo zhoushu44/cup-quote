@@ -20,6 +20,12 @@ RUN apk add --no-cache tzdata \
 COPY index.html /usr/share/nginx/html/index.html
 COPY assets/    /usr/share/nginx/html/assets/
 
+# 资源版本号：index.html 里引用脚本/样式的地址是 assets/xxx?v=__V__，
+# 构建时把 __V__ 换成提交号（--build-arg ASSET_V=xxx）。地址一变，浏览器必定下载新文件，
+# 不会再出现「服务器已更新、浏览器还在用旧脚本」
+ARG ASSET_V=dev
+RUN sed -i "s/__V__/${ASSET_V}/g" /usr/share/nginx/html/index.html
+
 # nginx 配置（含 listen 0.0.0.0:80、gzip、缓存、安全头）
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 

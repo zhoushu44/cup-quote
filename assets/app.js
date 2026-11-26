@@ -4706,6 +4706,15 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
+  /* 右上角显示当前版本：取自脚本地址里的 ?v=（打镜像时填的提交号），用来确认浏览器跑的是不是新版 */
+  (function () {
+    var sc = document.querySelector('script[src*="app.js"]');
+    var m = sc ? /(?:[?&])v=([^&]+)/.exec(sc.getAttribute('src') || '') : null;
+    var v = m && m[1] !== '__V__' ? m[1] : '';
+    var box = $('#appVer');
+    if (v && box) { box.textContent = '版本 ' + v; box.style.display = ''; }
+  })();
+
   window.PC_APP = {
     tiers: tiers, costDetail: costDetail, unitCost: unitCost, cupCost: cupCost,
     cupPaperCalc: cupPaperCalc, cupCfg: cupCfg, fanBlank: fanBlank, autoPack: autoPack, paperCfg: paperCfg, paperById: paperById,
