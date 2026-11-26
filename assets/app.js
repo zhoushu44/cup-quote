@@ -294,6 +294,18 @@
     }
     return c;
   }
+  /* 给某一层换纸。手填的拼版数是跟着「这张纸」走的：换纸后先恢复自动，
+     旧纸的手填数记在 packMemo 里，换回那张纸时自动恢复 */
+  function setLayerPaper(c, L, newId) {
+    if (!L) return;
+    var memo = c.packMemo || (c.packMemo = {});
+    var old = num(L.pack) > 0 ? Math.round(num(L.pack)) : 0;
+    if (old > 0 && L.paperId && L.paperId !== newId) memo[L.paperId] = old;
+    L.paperId = newId;
+    var back = num(memo[newId]) > 0 ? Math.round(num(memo[newId])) : 0;
+    L.pack = back;
+    return { cleared: old > 0 && !back, restored: back > 0 };
+  }
   /* 默认配置：拼版留 0 = 按纸长宽自动算 */
   function defaultCupCfg(sp) {
     var cfg = paperCfg();
@@ -864,8 +876,8 @@
         return '<option value="' + m.id + '"' + (L.paperId === m.id ? ' selected' : '') + '>' + esc(label) + '</option>';
       }).join('');
       sel.onchange = function () {
-        L.paperId = this.value;
-        save(); sync();
+        setLayerPaper(cc, L, this.value);
+        save(); renderPapers(); sync();
       };
       row.appendChild(sel);
       var pl0 = cupPaperCalc(sp).layers[i] || {};
@@ -3178,7 +3190,7 @@
         var c = cupCfg(s);
         var L = c.layers[num(sel.dataset.li)] || c.layers[0];
         if (!L) return;
-        L.paperId = sel.value;
+        setLayerPaper(c, L, sel.value);
         save(); renderPaperTable(); sync();
       };
     });
