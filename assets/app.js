@@ -45,6 +45,8 @@
     wt: {},                 // 每个杯型的实测单杯克重（空=自动估算）
     customSpecs: [],        // 自定义杯型
     specOrder: null,        // 杯型显示顺序（id 数组）
+    specHidden: [],         // 已删除的内置杯型（id 数组，可恢复）
+    specDims: {},           // 内置杯型改过的尺寸 { id: { top, bottom, height } }
     craftOrder: null,       // 工艺显示顺序
     customCrafts: [],       // 自定义工艺（id,name,prices,plate,desc）
     shipZones: {},          // 每家快递的分区价表 { sf: [{zones:[zoneId], first, next}, ...] }
@@ -453,6 +455,7 @@
         paper: state.paper, paperStock: state.paperStock, proc: state.proc,
         craftGrid: state.craftGrid, addon: state.addon, lead: state.lead,
         shipGrid: state.shipGrid, wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, customSpecs: state.customSpecs, customCrafts: state.customCrafts, specOrder: state.specOrder, craftOrder: state.craftOrder,
+        specHidden: state.specHidden, specDims: state.specDims,
         invoice: state.invoice, shipping: state.shipping, freightPay: state.freightPay,
         mode: state.mode, tea: state.tea,
         params: state.params, ocrText: state.ocrText, custOcrText: state.custOcrText
@@ -489,6 +492,9 @@
       if (o.specOrder) state.specOrder = o.specOrder;
       if (o.craftOrder) state.craftOrder = o.craftOrder;
       if (o.customCrafts) state.customCrafts = o.customCrafts;
+      if (o.specDims) state.specDims = o.specDims;
+      if (o.specHidden) state.specHidden = o.specHidden;
+      applySpecDims();
       if (o.boxCfg) state.boxCfg = o.boxCfg;
       if (o.addon) state.addon = Object.assign(state.addon, o.addon);
       // 旧存档里已废弃的加价字段（含结构工费），加载后清掉
@@ -3091,6 +3097,9 @@
     var head = '<thead><tr>' +
       '<th class="l">杯型</th>' +
       '<th class="cap-th">容量</th>' +
+      '<th class="dim-th" title="杯口外径（mm）。改了尺寸，拼版数、克重、纸价都跟着重算">上口<br><i>mm</i></th>' +
+      '<th class="dim-th" title="杯底外径（mm）">下口<br><i>mm</i></th>' +
+      '<th class="dim-th" title="杯高（mm）">杯高<br><i>mm</i></th>' +
       '<th>结构</th>' +
       '<th>层</th>' +
       '<th>纸张</th>' +
@@ -3101,7 +3110,7 @@
       '<th>底片重</th>' +
       '<th>底片成本</th>' +
       '<th>层重</th>' +
-      '<th style="width:76px"></th></tr></thead>';
+      '<th style="width:104px"></th></tr></thead>';
 
     var rows = [];
     specs.forEach(function (s, si) {
@@ -3116,6 +3125,10 @@
       rows.push('<tr class="grp' + cur + '" data-rid="' + s.id + '">' +
         '<td class="nm">' + esc(s.name) + '</td>' +
         '<td class="cap-cell">' + (s.oz || '—') + 'oz / ' + (s.ml || '—') + 'ml</td>' +
+        ['top', 'bottom', 'height'].map(function (k) {
+          return '<td class="dim-cell"><input type="number" min="1" step="1" data-dim="' + k + '" data-sid="' + s.id + '" value="' +
+            (num(s[k]) || '') + '"' + (s.custom ? '' : ' title="内置杯型，改了尺寸会一直记着"') + '></td>';
+        }).join('') +
         '<td><select data-struct="' + s.id + '">' + optHtml + '</select></td>' +
         '<td class="dim" colspan="9">单杯 <b>' + calc.gram.toFixed(1) + ' g</b>　｜　纸价 <b>¥' + fp(calc.cost) + '</b>/只' +
         (num(cfg.lossStart) > 0 ? '<span class="mini note">含调机损耗 ' + num(cfg.lossStart) + ' 张/单，按当前订单 ' + num(state.qty) + ' 只摊</span>' : '') +
@@ -3133,7 +3146,7 @@
         var man = num(raw.pack) > 0;
         var packTip = man ? '手填值，点右边的「手填」恢复自动' : '留空 = 自动算。填了数字 = 按你填的算';
         rows.push('<tr class="layerrow">' +
-          '<td class="dim" colspan="3"></td>' +
+          '<td class="dim" colspan="6"></td>' +
           '<td class="dim">' + (L.i === 0 ? '内杯' : '外杯') + '</td>' +
           '<td><select data-paper="' + s.id + '" data-li="' + L.i + '">' + pOpts + '</select></td>' +
           '<td class="pack-cell"><div class="pack-wrap"><input type="number" min="0" step="1" data-pack="' + s.id + '" data-li="' + L.i + '" value="' +
@@ -3230,13 +3243,66 @@
       };
     });
     makeSortable('#paperTable', 'spec', function () { renderPaperTable(); renderSpecSelect(); sync(); });
-    bindRowOps('#paperTable', function () {
-      state.customSpecs = state.customSpecs.filter(function (s) {
-        if (s._del) { delete state.cupPaper[s.id]; return false; }
-        return true;
-      });
-      renderPaperTable(); renderSpecSelect(); sync();
+    // 尺寸：改了就重算拼版 / 克重 / 纸价
+    $$('#paperTable input[data-dim]').forEach(function (inp) {
+      inp.onchange = function () {
+        var s = specById(inp.dataset.sid);
+        if (!s) return;
+        var k = inp.dataset.dim, v = Math.round(num(inp.value));
+        if (!(v > 0)) { renderPaperTable(); return; }          // 清空或填了 0 → 不改，还原
+        var next = { top: num(s.top), bottom: num(s.bottom), height: num(s.height) };
+        next[k] = v;
+        if (next.bottom >= next.top) { toast('下口要比上口小'); renderPaperTable(); return; }
+        if (next[k] === num(s[k])) { renderPaperTable(); return; }
+        s[k] = v;
+        if (!s.custom) {
+          state.specDims = state.specDims || {};
+          state.specDims[s.id] = { top: s.top, bottom: s.bottom, height: s.height };
+        }
+        // 杯子大小变了，原来手填的拼版数不再对应 → 这一层的拼版全部恢复自动
+        var c = cupCfg(s), cleared = false;
+        c.layers.forEach(function (L) { if (num(L.pack) > 0) { L.pack = 0; cleared = true; } });
+        c.packMemo = {};
+        save(); renderPaperTable(); renderSpecSelect(); sync();
+        if (cleared) toast('尺寸已改，这个杯型的拼版数恢复自动');
+      };
     });
+    // 行操作：上下移动（全部杯型）、删除（自定义 = 直接删；内置 = 隐藏，可恢复）
+    $$('#paperTable .rop[data-op]').forEach(function (b) {
+      b.onclick = function () {
+        var op = b.dataset.op, id = b.dataset.id;
+        var ids = allSpecs().map(function (x) { return x.id; });
+        var i = ids.indexOf(id);
+        if (i < 0) return;
+        if (op === 'up' && i > 0) { ids.splice(i, 1); ids.splice(i - 1, 0, id); state.specOrder = ids; }
+        else if (op === 'down' && i < ids.length - 1) { ids.splice(i, 1); ids.splice(i + 1, 0, id); state.specOrder = ids; }
+        else if (op === 'del') {
+          var name = (specById(id) || {}).name || '';
+          if (String(id).indexOf('custom-') === 0) {
+            if (!confirm('删除「' + name + '」？删除后不能恢复')) return;
+            state.customSpecs = state.customSpecs.filter(function (x) { return x.id !== id; });
+          } else {
+            if (!confirm('删除「' + name + '」？内置杯型删除后可以点右上角「恢复」找回来')) return;
+            state.specHidden = (state.specHidden || []).concat(id);
+          }
+          delete state.cupPaper[id];
+        } else return;
+        if (state.specId === id) state.specId = (allSpecs()[0] || {}).id;
+        save(); renderPaperTable(); renderSpecSelect(); sync();
+      };
+    });
+    // 恢复被删除的内置杯型
+    var rs = $('#specRestore');
+    if (rs) {
+      var hidden = (state.specHidden || []).filter(function (id) { return (D.specs || []).some(function (x) { return x.id === id; }); });
+      rs.textContent = hidden.length ? '恢复已删除的内置杯型（' + hidden.length + '）' : '';
+      rs.style.display = hidden.length ? '' : 'none';
+      rs.onclick = function () {
+        state.specHidden = [];
+        save(); renderPaperTable(); renderSpecSelect(); sync();
+        toast('已恢复 ' + hidden.length + ' 个内置杯型');
+      };
+    }
   }
 
   /* 加工费梯度（成型 / 印刷） */
@@ -3743,8 +3809,29 @@
   }
   /* ================= 列表行管理：添加 / 删除 / 上下移动 ================= */
   /* 杯型、工艺、茶叶杯尺寸/包装/茶叶 都用它 */
+  /* 内置杯型的原始尺寸：改过尺寸后要能恢复 */
+  var SPEC_DIMS0 = {};
+  (D.specs || []).forEach(function (s) { SPEC_DIMS0[s.id] = { top: s.top, bottom: s.bottom, height: s.height }; });
+
+  /* 把内置杯型的尺寸恢复成出厂值，再套上用户改过的（存在 specDims 里）。
+     自定义杯型的尺寸直接改在它自己身上，不在这里 */
+  function applySpecDims() {
+    (D.specs || []).forEach(function (s) {
+      var o = SPEC_DIMS0[s.id];
+      if (o) { s.top = o.top; s.bottom = o.bottom; s.height = o.height; }
+    });
+    Object.keys(state.specDims || {}).forEach(function (id) {
+      var s = (D.specs || []).filter(function (x) { return x.id === id; })[0];
+      var d = state.specDims[id];
+      if (s && d && num(d.top) > 0 && num(d.bottom) > 0 && num(d.height) > 0) {
+        s.top = num(d.top); s.bottom = num(d.bottom); s.height = num(d.height);
+      }
+    });
+  }
+
   function allSpecs() {
-    var all = (state.customSpecs || []).concat(D.specs);
+    var hid = state.specHidden || [];
+    var all = (state.customSpecs || []).concat(D.specs).filter(function (s) { return hid.indexOf(s.id) < 0; });
     var ord = state.specOrder;
     if (ord && ord.length) {
       var map = {};
@@ -3774,12 +3861,16 @@
     if (kind === 'teaLeaf') return D.tea.leaves;
     return [];
   }
-  /* 行操作：只剩删除按钮（排序改用拖拽） */
+  /* 行操作：删除按钮（排序用拖拽或上下按钮）。
+     杯型这一行：全部可删（内置的删掉只是隐藏，能恢复）、可上下移动 */
   function rowOps(kind, id, idx, total) {
-    var canDel = (kind === 'teaSize' || kind === 'teaPack' || (id && String(id).indexOf('custom-') === 0));
+    var isSpec = kind === 'spec';
+    var canDel = isSpec || kind === 'teaSize' || kind === 'teaPack' || (id && String(id).indexOf('custom-') === 0);
     return '<span class="row-ops">' +
       '<span class="drag-handle" title="按住拖动排序">⋮⋮</span>' +
-      (canDel ? '<button class="rop rop-del" data-op="del" data-kind="' + kind + '" data-id="' + esc(id) + '" title="删除">×</button>' : '') +
+      (isSpec ? '<button class="rop rop-mv" data-op="up" data-kind="spec" data-id="' + esc(id) + '" title="上移"' + (idx <= 0 ? ' disabled' : '') + '>↑</button>' +
+        '<button class="rop rop-mv" data-op="down" data-kind="spec" data-id="' + esc(id) + '" title="下移"' + (idx >= total - 1 ? ' disabled' : '') + '>↓</button>' : '') +
+      (canDel ? '<button class="rop rop-del" data-op="del" data-kind="' + kind + '" data-id="' + esc(id) + '" title="' + (isSpec && String(id).indexOf('custom-') !== 0 ? '删除（内置杯型可恢复）' : '删除') + '">×</button>' : '') +
       '</span>';
   }
 
@@ -4504,6 +4595,7 @@
         params: state.params, company: D.company,
         wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, shipGrid: state.shipGrid,
         customSpecs: state.customSpecs, customCrafts: state.customCrafts,
+        specHidden: state.specHidden, specDims: state.specDims,
         tea: D.tea, lead: state.lead
       }, null, 2)], { type: 'application/json' }), '纸杯报价备份.json');
     };
@@ -4538,6 +4630,9 @@
           if (o.customSpecs) state.customSpecs = o.customSpecs.filter(function (s) { return !/纸桶|纸碗/.test(s.group || ''); });
           if (o.customCrafts) state.customCrafts = o.customCrafts;
           if (o.specOrder) state.specOrder = o.specOrder;
+          if (Array.isArray(o.specHidden)) state.specHidden = o.specHidden;
+          state.specDims = (o.specDims && typeof o.specDims === 'object') ? o.specDims : {};
+          applySpecDims();
           if (o.craftOrder) state.craftOrder = o.craftOrder;
           if (o.teaState) state.tea = Object.assign(state.tea, o.teaState);
           if (o.tea) D.tea = o.tea;

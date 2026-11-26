@@ -625,6 +625,19 @@ table.ct tr.layerrow td.dim { color: var(--ink2); }
 table.ct td select[data-struct] { min-width: 88px; }
 table.ct td select[data-paper] { min-width: 150px; max-width: 210px; }
 table.ct td input[data-pack], table.ct td input[data-loss] { width: 62px; }
+/* 杯型尺寸列（上口 / 下口 / 杯高） */
+table.ct th.dim-th { white-space: nowrap; line-height: 1.25; text-align: center; }
+table.ct th.dim-th i { font-style: normal; font-weight: 400; font-size: 10.5px; color: var(--ink3); }
+table.ct td.dim-cell { padding-left: 4px; padding-right: 4px; }
+table.ct td.dim-cell input { width: 52px; padding-left: 3px; padding-right: 3px; }
+/* 表格太宽时，最右边的操作列（拖拽 / 上下 / 删除）固定不动，横向滚动也一直看得到 */
+table.ct thead th:last-child { position: sticky; right: 0; z-index: 3; background: #f6f0ea; }
+table.ct td.ops-cell { position: sticky; right: 0; z-index: 2; background: #fff; box-shadow: -8px 0 8px -8px rgba(60, 40, 20, 0.28); }
+table.ct tr.grp td.ops-cell { background: #faf6f2; z-index: 2; }
+table.ct tr.layerrow td.ops-cell { box-shadow: -8px 0 8px -8px rgba(60, 40, 20, 0.28); }
+table.ct td select[data-paper] { min-width: 140px; max-width: 190px; }
+.rop[disabled] { opacity: 0.3; cursor: default; }
+.rop-mv:hover { background: #f1e9e2; color: var(--ink); }
 /* 拼版数：输入框留空 = 自动，右边标出自动算出的拼数 */
 table.ct td.pack-cell { white-space: nowrap; }
 .pack-wrap { display: inline-flex; align-items: center; gap: 8px; }
