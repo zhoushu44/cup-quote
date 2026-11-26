@@ -271,6 +271,11 @@ async function serveApi(req, res, url) {
       try { return json(res, 200, { ok: true, list: await erp.productPapers(DATA, Number(arg) || Number(url.searchParams.get('pid')) || 0) }); }
       catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
+    /* 业务员名单（ERP 系统用户） */
+    if (w === 'saleman') {
+      try { return json(res, 200, { ok: true, list: await erp.saleManList(DATA) }); }
+      catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
     if (w === 'meta') {
       try { return json(res, 200, { ok: true, products: await erp.products(DATA), config: erp.maskCfg(DATA) }); }
       catch (e) { return json(res, 200, { ok: false, error: e.message, config: erp.maskCfg(DATA) }); }

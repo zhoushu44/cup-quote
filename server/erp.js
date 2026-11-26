@@ -127,6 +127,13 @@ async function ensureCustomer(DATA, info) {
   return made;
 }
 
+/* 业务员名单（ERP 系统用户，{id, name}） */
+async function saleManList(DATA) {
+  const j = await api(DATA, '/system/user/list?pageSize=500');
+  return (j.rows || []).filter(function (u) { return u && u.nickName && u.status !== '1'; })
+    .map(function (u) { return { id: u.userId, name: u.nickName, status: u.status }; });
+}
+
 /* ---------- 产品 / 装箱规格 ---------- */
 async function products(DATA) {
   const j = await api(DATA, '/base/product/list?pageNum=1&pageSize=300&status=1');
@@ -214,5 +221,5 @@ module.exports = {
   status: status, maskCfg: maskCfg, writeCfg: writeCfg,
   login: login, findCustomers: findCustomers, ensureCustomer: ensureCustomer,
   products: products, packages: packages, createOrder: createOrder, uploadDesign: uploadDesign,
-  processTemplate: processTemplate, productPapers: productPapers
+  processTemplate: processTemplate, productPapers: productPapers, saleManList: saleManList
 };

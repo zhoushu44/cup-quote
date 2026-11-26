@@ -5200,7 +5200,7 @@
       '<label>客户名称<input id="erpCust" list="erpCustList" value="' + esc(q.customer || '') + '" placeholder="输入会搜 ERP 客户，选中的直接用，没有的自动新建"><datalist id="erpCustList"></datalist></label>' +
       '<label>联系人<input id="erpContact" value="' + esc(q.contact || '') + '"></label>' +
       '<label>手机 / 收货地址（可选，随客户档案存进 ERP）<input id="erpMobile" placeholder="手机号"><input id="erpAddr" placeholder="收货地址"></label>' +
-      '<label>业务员（可选，进 ERP 客户档案）<input id="erpSale"></label>' +
+      '<label>业务员（选 ERP 系统用户，存进客户档案）<select id="erpSale"><option value="">（不填）</option></select></label>' +
       '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
       '<label>物流公司<input id="erpLogi" value="创新物流"></label>' +
       '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
@@ -5262,7 +5262,15 @@
       custSelId = hit.id;
       if (!$('#erpContact').value.trim() && hit.linkman) $('#erpContact').value = hit.linkman;
       if (!$('#erpMobile').value.trim() && hit.mobile) $('#erpMobile').value = hit.mobile;
-      if (!$('#erpSale').value.trim() && hit.saleMan) $('#erpSale').value = hit.saleMan;
+      if (!$('#erpSale').value.trim() && hit.saleMan) { var so = $('#erpSale'); for (var i = 0; i < so.options.length; i++) if (so.options[i].text === hit.saleMan) so.selectedIndex = i; }
+    });
+
+    /* 业务员下拉：ERP 系统用户名单 */
+    api('GET', '/api/erp?w=saleman').then(function (r) {
+      var sel = $('#erpSale');
+      if (r.ok) sel.innerHTML += (r.list || []).map(function (u) {
+        return '<option value="' + esc(u.name) + '">' + esc(u.name) + '</option>';
+      }).join('');
     });
 
     $('#erpGo').onclick = function () {
