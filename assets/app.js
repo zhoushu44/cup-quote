@@ -5182,6 +5182,7 @@
       '<div class="erp-sum">' + esc(q.spec.name) + '　' + esc(q.struct) + '　' + fq(q.qty) + ' 只 × ¥' + fm(q.price) +
       ' ＝ <b>¥' + fm(q.total) + '</b>' + (freightCharged > 0 ? '（含运费 ¥' + fm(freightCharged) + '）' : '') + '</div>' +
       '<label>ERP 产品<select id="erpProd"></select></label>' +
+      '<label>纸种<select id="erpPaper"></select></label>' +
       '<label>装箱<select id="erpPk"></select></label>' +
       '<label>客户名称<input id="erpCust" value="' + esc(q.customer || '') + '" placeholder="ERP 里没有同名客户时会自动新建"></label>' +
       '<label>联系人<input id="erpContact" value="' + esc(q.contact || '') + '"></label>' +
@@ -5192,10 +5193,22 @@
       (state.quoteImg && state.quoteImg.src ? '<label class="erp-imgrow"><input type="checkbox" id="erpSendImg" checked style="width:auto;display:inline-block;margin:0 6px 0 0">版面图随单传到 ERP（' + esc(state.quoteImg.w || '?') + '×' + esc(state.quoteImg.h || '?') + '）</label>' : '') +
       '<div class="erp-foot"><button class="btn" data-erp-close>取消</button><button class="btn primary" id="erpGo">确认下单</button></div>');
 
-    var selP = $('#erpProd'), selK = $('#erpPk');
+    var selP = $('#erpProd'), selK = $('#erpPk'), selPa = $('#erpPaper');
     selP.innerHTML = ERP.prods.map(function (p) {
       return '<option value="' + p.id + '"' + (prod && p.id === prod.id ? ' selected' : '') + '>' + esc(p.name) + '</option>';
     }).join('');
+    function loadPaper() {
+      var gsm = num(q.cupGram) || 0;
+      return api('GET', '/api/erp?w=papers&pid=' + selP.value).then(function (r) {
+        var ps = (r.ok && r.list || []).filter(function (p) { return p && p.name && p.suttleId; });
+        var pick = ps.filter(function (p) { return p.name.indexOf(gsm + 'g') >= 0; })[0] ||
+          ps.filter(function (p) { return p.def === 1; })[0] || ps[0];
+        selPa.innerHTML = ps.map(function (p) {
+          return '<option value="' + p.suttleId + '"' + (pick && p.suttleId === pick.suttleId ? ' selected' : '') +
+            ' data-name="' + esc(p.name) + '" data-paper="' + esc(p.paper || '') + '">' + esc(p.name) + '</option>';
+        }).join('');
+      });
+    }
     function loadPk() {
       return api('GET', '/api/erp?w=pk&pid=' + selP.value).then(function (r) {
         ERP.pk = (r.ok && r.list) || [];
@@ -5207,7 +5220,8 @@
       });
     }
     loadPk();
-    selP.onchange = function () { selK.innerHTML = '<option>加载中…</option>'; loadPk(); };
+    loadPaper();
+    selP.onchange = function () { selK.innerHTML = '<option>加载中…</option>'; selPa.innerHTML = '<option>加载中…</option>'; loadPk(); loadPaper(); };
 
     $('#erpGo').onclick = function () {
       var cust = $('#erpCust').value.trim();
@@ -5238,6 +5252,7 @@
         paperGsm: num(q.cupGram) || 0,
         paperKw: paperKw.replace(/g$/i, ''),
         logistics: $('#erpLogi').value.trim(),
+        paper: (selPa.value ? { suttleId: num(selPa.value), name: selPa.options[selPa.selectedIndex].getAttribute('data-name'), paperName: selPa.options[selPa.selectedIndex].getAttribute('data-paper') } : null),
         design: ($('#erpSendImg') && $('#erpSendImg').checked && state.quoteImg && state.quoteImg.src) ? {
           name: (q.no ? q.no : 'layout') + '-版面图.jpg',
           b64: state.quoteImg.src,

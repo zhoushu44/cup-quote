@@ -266,6 +266,11 @@ async function serveApi(req, res, url) {
       try { return json(res, 200, { ok: true, list: await erp.packages(DATA, Number(arg) || Number(url.searchParams.get('pid')) || 0) }); }
       catch (e) { return json(res, 200, { ok: false, error: e.message }); }
     }
+    /* 该产品可选纸种（ERP 纸种库） */
+    if (w === 'papers') {
+      try { return json(res, 200, { ok: true, list: await erp.productPapers(DATA, Number(arg) || Number(url.searchParams.get('pid')) || 0) }); }
+      catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
     if (w === 'meta') {
       try { return json(res, 200, { ok: true, products: await erp.products(DATA), config: erp.maskCfg(DATA) }); }
       catch (e) { return json(res, 200, { ok: false, error: e.message, config: erp.maskCfg(DATA) }); }
@@ -308,7 +313,12 @@ async function serveApi(req, res, url) {
           (body3.crafts || []).forEach(function (c) { push(tpl.filter(function (r) { return r.processName === c; })[0]); });
           order.processList = rows;
         }
-        /* 纸种：按报价的克重（+纸名关键词）在 ERP 产品纸种库里匹配 */
+        /* 纸种：确认框里选了就直接用；没选就按报价的克重（+纸名关键词）在 ERP 产品纸种库里匹配 */
+        if (body3.paper && body3.paper.suttleId) {
+          order.paperSuttle = body3.paper.name || '';
+          order.suttleId = body3.paper.suttleId;
+          order.paper = body3.paper.paperName || String(body3.paper.name || '').replace(/\d+g$/, '');
+        }
         if (!order.suttleId) {
           const ps = (await erp.productPapers(DATA, order.productId)).filter(function (p) { return p && p.name && p.suttleId; });
           const gsm = Number(body3.paperGsm) || 0;
