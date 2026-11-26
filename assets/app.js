@@ -5009,7 +5009,8 @@
       html = '正在修改已保存的报价单 <b class="sb-no">' + esc(rec.no) + '</b>　<span class="dim">有改动，价格已按<b>现在的成本</b>重新计算；点「保存」会存成新单号 ' +
         esc(state._no) + '，原单保持不变</span>';
     } else {
-      html = '正在查看已保存的报价单 <b class="sb-no">' + esc(rec.no) + '</b>　<span class="dim">' + fmtTs(rec.ts) + ' 保存 · 按当时的成本计算，价格与当时一致</span>';
+      html = '正在查看已保存的报价单 <b class="sb-no">' + esc(rec.no) + '</b>　<span class="dim">' + fmtTs(rec.ts) + ' 保存 · 按当时的成本计算，价格与当时一致</span>' +
+        (rec.erp && rec.erp.code ? '　<span class="sb-erp">已下生产单 <b>' + esc(rec.erp.code) + '</b></span>' : '');
       try {
         var now = liveQuote(), was = state._q || buildQuote();
         if (Math.abs(now.total - was.total) > 0.005 || Math.abs(now.price - was.price) > 0.0001) {
@@ -5055,7 +5056,7 @@
     return api('GET', '/api/quote/' + encodeURIComponent(id)).then(function (r) {
       if (!r.ok) { toast(r.error || '这张报价单打不开'); forgetRecord(); return r; }
       var x = r.record;
-      openRecord({ id: x.id, no: x.no, ts: x.ts, inputs: (x.data || {}).inputs || {}, cost: (x.data || {}).cost || null }, opt);
+      openRecord({ id: x.id, no: x.no, ts: x.ts, inputs: (x.data || {}).inputs || {}, cost: (x.data || {}).cost || null, erp: (x.data || {}).erp || null }, opt);
       return r;
     });
   }
@@ -5090,6 +5091,153 @@
       if (VIEW.rec && VIEW.rec.id === id) closeRecord();
       qsRefresh();
     });
+  }
+
+  /* ---------- ERP 下单：把报价单推送到印刷 ERP 生成生产单 ---------- */
+  var ERP = { mask: null, prods: [], pk: [], order: null };
+
+  /* 按盎司数+结构挑 ERP 产品：单层 → “9盎司”；双层/中空 → 含“中空”的同盎司名 */
+  function erpPickProduct(oz, structName) {
+    var hollow = /双|中空/.test(structName || '');
+    var want = hollow ? (oz + '中空') : (oz + '盎司');
+    var hit = ERP.prods.filter(function (p) { return p.name === want; })[0];
+    if (!hit && hollow) hit = ERP.prods.filter(function (p) { return p.name.indexOf(oz + '中空') === 0; })[0];
+    if (!hit) hit = ERP.prods.filter(function (p) { return p.name === oz + '盎司'; })[0];
+    if (!hit && hollow) hit = ERP.prods.filter(function (p) { return /欧8中空/.test(p.name); })[0];
+    return hit || ERP.prods[0] || null;
+  }
+
+  /* 选每箱装多少：优先选能整除且箱数适中的 */
+  function erpPickPk(qty) {
+    var ok = ERP.pk.filter(function (p) { return p.per > 0 && qty % p.per === 0 && p.name.indexOf('定制') < 0; });
+    var pool = ok.length ? ok : ERP.pk.filter(function (p) { return p.name.indexOf('定制') < 0; });
+    if (!pool.length) pool = ERP.pk;
+    pool = pool.slice().sort(function (a, b) { return b.per - a.per; });
+    for (var i = 0; i < pool.length; i++) { var c = Math.ceil(qty / pool[i].per); if (c >= 5 && c <= 60) return pool[i]; }
+    return pool[pool.length - 1] || null;
+  }
+
+  function erpModal(html) {
+    erpClose();
+    var mask = document.createElement('div');
+    mask.className = 'erp-mask';
+    mask.innerHTML = '<div class="erp-modal">' + html + '</div>';
+    document.body.appendChild(mask);
+    ERP.mask = mask;
+    mask.addEventListener('click', function (e) {
+      if (e.target === mask || e.target.closest('[data-erp-close]')) erpClose();
+    });
+    return mask;
+  }
+  function erpClose() { if (ERP.mask) { ERP.mask.remove(); ERP.mask = null; } }
+
+  /* 没配账号时先填账号（存服务器 DATA/erp.json，不入 git） */
+  function erpConfigUI() {
+    erpModal(
+      '<h3>连接印刷 ERP</h3>' +
+      '<div class="erp-tip dim">填一次就行，账号保存在服务器上（ERP 的登录账号）</div>' +
+      '<label>ERP 地址<input id="erpCfgUrl" value="http://dhbz.chenhukeji.cn"></label>' +
+      '<label>账号<input id="erpCfgUser"></label>' +
+      '<label>密码<input id="erpCfgPass" type="password"></label>' +
+      '<div class="erp-foot"><button class="btn" data-erp-close>取消</button><button class="btn primary" id="erpCfgSave">保存并继续</button></div>');
+    $('#erpCfgSave').onclick = function () {
+      var user = $('#erpCfgUser').value.trim(), pass = $('#erpCfgPass').value;
+      if (!user || !pass) { toast('账号和密码都要填'); return; }
+      api('POST', '/api/erp', { config: { url: $('#erpCfgUrl').value.trim(), user: user, pass: pass } }).then(function (r) {
+        if (!r.ok) { toast(r.error || '保存失败'); return; }
+        toast('已保存 ERP 账号');
+        erpOpen();
+      });
+    };
+  }
+
+  function erpOpen() {
+    if (!VIEW.rec || VIEW.dirty) { toast('请先点「保存」存好这张报价单，再下生产单'); return; }
+    api('GET', '/api/erp?w=config').then(function (r) {
+      if (!r.ok || !r.config || !r.config.configured) { erpConfigUI(); return; }
+      return api('GET', '/api/erp?w=meta').then(function (m) {
+        if (!m.ok) { toast('ERP 连不上：' + (m.error || '') + '　点「下单ERP」重试'); erpConfigUI(); return; }
+        ERP.prods = m.products || [];
+        if (VIEW.rec.erp && VIEW.rec.erp.code) {
+          if (!confirm('这张单已经下过生产单 ' + VIEW.rec.erp.code + '，要再下一张新的吗？')) return;
+        }
+        erpFormUI();
+      });
+    });
+  }
+
+  function erpFormUI() {
+    var q = state._q || buildQuote();
+    var oz = num(q.spec && q.spec.oz) || 0;
+    var prod = erpPickProduct(oz, q.struct);
+    var freightCharged = (state.freightPay !== 'collect') ? num(q.freight) : 0;
+    var d0 = new Date(Date.now() + (num(q.leadDays) || 7) * 86400000);
+    var defDate = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0') + '-' + String(d0.getDate()).padStart(2, '0');
+    var layout = [q.spec.name, q.struct, q.lining, (q.crafts || []).join('、'), '四色印刷', '印刷要求(按图印刷)']
+      .filter(Boolean).join(';') + ';';
+    var remark = '报价单 ' + (q.no || '') + (state.freightPay === 'collect' ? '；运费到付' : '');
+
+    erpModal(
+      '<h3>下生产单到印刷 ERP</h3>' +
+      '<div class="erp-sum">' + esc(q.spec.name) + '　' + esc(q.struct) + '　' + fq(q.qty) + ' 只 × ¥' + fm(q.price) +
+      ' ＝ <b>¥' + fm(q.total) + '</b>' + (freightCharged > 0 ? '（含运费 ¥' + fm(freightCharged) + '）' : '') + '</div>' +
+      '<label>ERP 产品<select id="erpProd"></select></label>' +
+      '<label>装箱<select id="erpPk"></select></label>' +
+      '<label>客户名称<input id="erpCust" value="' + esc(q.customer || '') + '" placeholder="ERP 里没有同名客户时会自动新建"></label>' +
+      '<label>联系人<input id="erpContact" value="' + esc(q.contact || '') + '"></label>' +
+      '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
+      '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
+      '<label>备注<input id="erpRemark" value="' + esc(remark) + '"></label>' +
+      '<div class="erp-foot"><button class="btn" data-erp-close>取消</button><button class="btn primary" id="erpGo">确认下单</button></div>');
+
+    var selP = $('#erpProd'), selK = $('#erpPk');
+    selP.innerHTML = ERP.prods.map(function (p) {
+      return '<option value="' + p.id + '"' + (prod && p.id === prod.id ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+    }).join('');
+    function loadPk() {
+      return api('GET', '/api/erp?w=pk&pid=' + selP.value).then(function (r) {
+        ERP.pk = (r.ok && r.list) || [];
+        var pick = erpPickPk(num(q.qty)) || ERP.pk[0];
+        selK.innerHTML = ERP.pk.map(function (p) {
+          return '<option value="' + p.goodId + '" data-per="' + p.per + '"' + (pick && p.goodId === pick.goodId ? ' selected' : '') + '>' +
+            esc(p.name) + '（每箱 ' + fq(p.per) + ' 只）</option>';
+        }).join('');
+      });
+    }
+    loadPk();
+    selP.onchange = function () { selK.innerHTML = '<option>加载中…</option>'; loadPk(); };
+
+    $('#erpGo').onclick = function () {
+      var cust = $('#erpCust').value.trim();
+      if (!cust) { toast('客户名称要填'); return; }
+      var opt = selK.options[selK.selectedIndex];
+      var per = opt ? num(opt.dataset.per) : 0;
+      if (!per) { toast('装箱规格没取到'); return; }
+      var count = Math.ceil(q.qty / per);
+      var btn = $('#erpGo');
+      btn.disabled = true; btn.textContent = '正在下单…';
+      var order = {
+        name: ((q.no ? q.no + ' ' : '') + q.spec.name).slice(0, 60),
+        productId: num(selP.value), product: selP.options[selP.selectedIndex].text,
+        productSize: selP.options[selP.selectedIndex].text + '||' + selP.options[selP.selectedIndex].text,
+        color: '4||四色', printSided: '1||单面',
+        orderQty: q.qty, unitPrice: q.price, productMoney: q.amount, orderMoney: q.total,
+        sendFee: 0, trueSendFee: freightCharged, deliverTime: $('#erpDate').value,
+        remark: $('#erpRemark').value.trim(), paperRemark: '', mainOrderInfo: $('#erpLayout').value.trim(),
+        operate: 1, orderStatus: 0, origin: '线下渠道',
+        planVoList: [{ packageType: 0, packageId: num(selK.value), count: count, num: per }]
+      };
+      api('POST', '/api/erp', { customer: { name: cust, contact: $('#erpContact').value.trim() }, order: order }).then(function (r) {
+        if (!r.ok) { toast(r.error || '下单失败'); btn.disabled = false; btn.textContent = '确认下单'; return; }
+        toast('已下生产单 ' + r.code);
+        erpClose();
+        if (VIEW.rec) {
+          VIEW.rec.erp = { code: r.code, id: r.id, ts: Date.now() };
+          api('POST', '/api/quote', { id: VIEW.rec.id, erp: VIEW.rec.erp });
+          renderBanner();
+        }
+      }).catch(function () { btn.disabled = false; btn.textContent = '确认下单'; });
+    };
   }
 
   /* 报价单上的「保存」 */
@@ -5222,6 +5370,8 @@
     });
     var sb = $('#btnSaveQuote');
     if (sb) sb.onclick = saveQuote;
+    var eb = $('#btnErp');
+    if (eb) eb.onclick = erpOpen;
   }
 
   /* 右上角显示当前版本：取自脚本地址里的 ?v=（打镜像时填的提交号），用来确认浏览器跑的是不是新版 */

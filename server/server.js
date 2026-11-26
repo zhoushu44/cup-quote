@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
+const erp = require('./erp');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA = process.env.DATA || '/data';
@@ -162,7 +163,7 @@ function serveStatic(req, res, url) {
 
 /* ---------- 接口 ---------- */
 async function serveApi(req, res, url) {
-  const m = url.pathname.match(/^\/api\/(search|quote|seq)(?:\/([a-z0-9]+))?$/i);
+  const m = url.pathname.match(/^\/api\/(search|quote|seq|erp)(?:\/([a-z0-9]+))?$/i);
   const route = m && m[1].toLowerCase();
   const arg = m && m[2];
   const jsonHead = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -194,6 +195,24 @@ async function serveApi(req, res, url) {
   if (route === 'quote' && req.method === 'POST') {
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (e) { return json(res, 400, { ok: false, error: '内容不是有效的数据' }); }
+
+    /* 只记 ERP 生产单号：{id, erp:{code,id,ts}} */
+    if (body && body.id && body.erp && !body.data) {
+      const f = recPath(String(body.id));
+      if (!f || !fs.existsSync(f)) return json(res, 404, { ok: false, error: '这张报价单不存在' });
+      try {
+        const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
+        rec.data = rec.data || {};
+        rec.data.erp = {
+          code: String(body.erp.code || '').slice(0, 40),
+          id: Number(body.erp.id) || 0,
+          ts: Number(body.erp.ts) || Date.now()
+        };
+        writeJson(f, rec);
+        return json(res, 200, { ok: true, erp: rec.data.erp });
+      } catch (e) { return json(res, 500, { ok: false, error: '保存失败' }); }
+    }
+
     const d = body && body.data;
     const inputs = d && d.inputs;
     if (!inputs || typeof inputs !== 'object') return json(res, 400, { ok: false, error: '缺少报价内容' });
@@ -231,6 +250,55 @@ async function serveApi(req, res, url) {
     const i = index.findIndex(function (r) { return r.id === arg; });
     if (i >= 0) index.splice(i, 1);
     return json(res, 200, { ok: true });
+  }
+
+  /* ---------- ERP（印刷生产系统）对接 ---------- */
+  if (route === 'erp' && req.method === 'GET' && !arg) {
+    const w = url.searchParams.get('w');
+    if (w === 'config') return json(res, 200, { ok: true, config: erp.maskCfg(DATA) });
+    if (w === 'customers') {
+      const q = String(url.searchParams.get('q') || '').trim();
+      if (!q) return json(res, 200, { ok: true, list: [] });
+      try { return json(res, 200, { ok: true, list: await erp.findCustomers(DATA, q, 10) }); }
+      catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    if (w === 'pk') {
+      try { return json(res, 200, { ok: true, list: await erp.packages(DATA, Number(arg) || Number(url.searchParams.get('pid')) || 0) }); }
+      catch (e) { return json(res, 200, { ok: false, error: e.message }); }
+    }
+    if (w === 'meta') {
+      try { return json(res, 200, { ok: true, products: await erp.products(DATA), config: erp.maskCfg(DATA) }); }
+      catch (e) { return json(res, 200, { ok: false, error: e.message, config: erp.maskCfg(DATA) }); }
+    }
+    return json(res, 404, { ok: false, error: '没有这个接口' });
+  }
+
+  if (route === 'erp' && req.method === 'POST' && !arg) {
+    let body3;
+    try { body3 = JSON.parse(await readBody(req)); } catch (e) { return json(res, 400, { ok: false, error: '内容不是有效的数据' }); }
+    /* 保存账号配置 */
+    if (body3 && body3.config) {
+      const c = erp.writeCfg(DATA, { url: body3.config.url, user: body3.config.user, pass: body3.config.pass || null });
+      return json(res, 200, { ok: true, config: { url: c.url, user: c.user, configured: !!(c.user && c.pass) } });
+    }
+    /* 下单：body = { customer:{name,contact,mobile}|customId, order:{…ERP 字段…} } */
+    if (body3 && body3.order) {
+      try {
+        const cust = body3.customId ? { id: body3.customId, name: body3.order.customer } :
+          await erp.ensureCustomer(DATA, body3.customer || {});
+        const order = body3.order;
+        if (!order.productId) throw new Error('没有选产品');
+        if (!order.orderQty) throw new Error('没有数量');
+        if (!order.productMoney) throw new Error('没有金额');
+        order.customId = cust.id;
+        order.customer = cust.name;
+        const made = await erp.createOrder(DATA, order);
+        return json(res, 200, { ok: true, code: made.code, id: made.id, customer: cust.name, customId: cust.id });
+      } catch (e) {
+        return json(res, 200, { ok: false, error: e.message });
+      }
+    }
+    return json(res, 400, { ok: false, error: '缺少下单内容' });
   }
 
   json(res, 404, { ok: false, error: '没有这个接口' });

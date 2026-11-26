@@ -970,3 +970,27 @@ label.lbl-up:hover { color: var(--ac); }
 }
 .saved-banner .sb-btns button:hover { border-color: var(--ac); color: var(--ac); }
 .saved-banner .sb-btns button.danger:hover { border-color: #c0392b; color: #c0392b; }
+/* ---------- ERP 下单弹窗 ---------- */
+.erp-mask {
+  position: fixed; inset: 0; z-index: 900; background: rgba(40, 34, 26, .45);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.erp-modal {
+  background: #fff; border-radius: 10px; padding: 18px 20px 16px; width: min(480px, 94vw);
+  max-height: 88vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  font-size: 13px;
+}
+.erp-modal h3 { margin: 0 0 8px; font-size: 16px; }
+.erp-modal .erp-tip { margin-bottom: 10px; }
+.erp-modal .erp-sum {
+  background: #f7f3ec; border-radius: 6px; padding: 7px 10px; margin-bottom: 12px; color: var(--ink);
+}
+.erp-modal label { display: block; margin-bottom: 9px; color: var(--dim, #8a7f6f); }
+.erp-modal input, .erp-modal select, .erp-modal textarea {
+  display: block; width: 100%; margin-top: 3px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px;
+  font: inherit; color: var(--ink); background: #fff;
+}
+.erp-modal textarea { resize: vertical; }
+.erp-modal .erp-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.saved-banner .sb-erp { color: #1d7a4f; font-weight: 600; }
