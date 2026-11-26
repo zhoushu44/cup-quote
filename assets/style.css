@@ -625,8 +625,20 @@ table.ct tr.layerrow td.dim { color: var(--ink2); }
 table.ct td select[data-struct] { min-width: 88px; }
 table.ct td select[data-paper] { min-width: 150px; max-width: 210px; }
 table.ct td input[data-pack], table.ct td input[data-loss] { width: 62px; }
+/* 拼版数：输入框留空 = 自动，右边标出自动算出的拼数 */
+table.ct td.pack-cell { white-space: nowrap; }
+.pack-wrap { display: inline-flex; align-items: center; gap: 8px; }
+.pack-wrap .auto-tag {
+  font-size: 11.5px; font-weight: 600; color: var(--ink3); white-space: nowrap; cursor: default;
+}
+.pack-wrap .auto-tag u { text-decoration: none; color: var(--ac); font-size: 13.5px; }
+.pack-wrap .auto-tag.man { color: #c0392b; cursor: pointer; border-bottom: 1px dashed #c0392b; }
+table.ct td.loss-cell .mini { display: block; font-style: normal; font-size: 11px; color: #b3591a; line-height: 1.3; }
+.mini.note { font-weight: 400; margin-left: 10px; color: #b3591a; font-size: 12px; }
+/* 层行里的短数值不折行（层名 / 克重 / 金额） */
+table.ct tr.layerrow td.dim, table.ct tr.layerrow td.loss-cell { white-space: nowrap; }
+table.ct td input[data-sk="desc"] { width: 210px; text-align: left; }
 table.ct td input[data-sk="name"] { width: 150px; text-align: left; }
-table.ct td input[data-sk="desc"] { width: 130px; text-align: left; }
 table.ct tfoot td { background: #fff; border-top: 1px solid var(--line); }
 /* 行内小按钮 */
 table.ct td.ops-cell { white-space: nowrap; }

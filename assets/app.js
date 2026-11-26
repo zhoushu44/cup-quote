@@ -151,6 +151,8 @@
     var p = state.paper || {};
     return {
       lossDefault: p.lossDefault == null ? 8 : clamp(num(p.lossDefault), 0, 90),
+      // 调机损耗：每单开机调机固定浪费几张纸（张/单），按这一单的数量摊到每只杯；0 = 不算
+      lossStart: p.lossStart == null ? 0 : clamp(num(p.lossStart), 0, 100000),
       // 卷边系数与杯底余量固定（不再做成可调参数）
       flange: 1.06,   // 扇片宽 = 上口周长 × 1.06
       botMargin: 4    // 杯底圆片直径 = 下口 + 4mm
@@ -227,6 +229,13 @@
     });
     return best;
   }
+  /* 纸的显示名：名字里没写克重时补在后面（名字已带 268g 就不重复） */
+  function paperLabel(p) {
+    p = p || {};
+    var g = num(p.gsm);
+    return (p.name || '未命名') + (g && String(p.name || '').indexOf(String(g)) < 0 ? ' ' + g + 'g' : '');
+  }
+
   /* 开料表里该杯型该层用的纸：{ id, pack } 或纸 id；没有返回 null */
   function sheetOf(sp, layerIdx) {
     var e = ((D.specSheets || {})[sp.id] || [])[layerIdx || 0];
@@ -299,10 +308,14 @@
   }
 
   /* 一只杯的纸成本与重量
-     杯身扇片：整张纸钱 ÷ (拼版数 × (1 − 损耗%))
-     杯底圆片：卷筒纸切圆片，不排版 → 净面积 × 克重 × 吨价 ÷ (1 − 损耗%)（切圆片的损耗） */
+     杯身扇片：整张纸钱 ÷ (拼版数 × (1 − 损耗%)) + 调机损耗（每单固定浪费几张纸 ÷ 这一单的只数）
+     杯底圆片：卷筒纸切圆片，不排版 → 净面积 × 克重 × 吨价 ÷ (1 − 损耗%)（切圆片的损耗）
+     cfg.qty = 这一单的只数（不传就用当前订单数量），调机损耗按它摊 */
   function cupPaperCalc(sp, cfg) {
     cfg = cfg || paperCfg();
+    if (cfg.qty == null) cfg.qty = state.qty;
+    var qty = Math.max(0, num(cfg.qty));
+    var startN = clamp(num(cfg.lossStart), 0, 100000);
     var cc = cupCfg(sp);
     var layers = [], cost = 0, gram = 0, noFit = false;
     for (var i = 0; i < cc.layers.length; i++) {
@@ -316,11 +329,15 @@
       var sheetArea = (num(p.len) || 787) / 1000 * (num(p.wid) || 1092) / 1000;
       var sheetGram = sheetArea * gsm;                                  // 一张纸多少克
       var sheetCost = sheetArea * gsm / 1000 * (num(p.price) || 0) / 1000;  // 一张纸多少钱
+      // 调机损耗：startN 张纸全部报废，折成「相当于多损耗百分之几」= 报废只数 ÷(订单只数 ×(1−损耗))
+      var startCost = (startN > 0 && qty > 0) ? startN * sheetCost / qty : 0;
+      var startLoss = (startN > 0 && qty > 0 && loss < 1) ? startN * pack / qty / (1 - loss) * 100 : 0;
       var row = {
         i: i, name: i === 0 ? '内杯' : '外杯', paper: p, gsm: gsm, price: num(p.price) || 0,
         loss: loss * 100, pack: pack, eff: eff,
         bodyGram: fanArea(sp, cfg) * gsm,      // 杯身净重（进到杯子里的纸）
         bodyCost: eff > 0 ? sheetCost / eff : 0,   // 杯身纸成本（按整张纸摊，含损耗与排版浪费）；放不下时不算
+        startCost: startCost, startLoss: startLoss,
         sheetGram: sheetGram, sheetCost: sheetCost
       };
       if (i === 0) {
@@ -333,7 +350,7 @@
         row.bottomCost = area * gsm / 1000 * (num(p.price) || 0) / 1000 / Math.max(0.05, 1 - loss);
       }
       layers.push(row);
-      cost += row.bodyCost + (row.bottomCost || 0);
+      cost += row.bodyCost + row.startCost + (row.bottomCost || 0);
       gram += row.bodyGram + (row.bottomGram || 0);
     }
     return { cfg: cfg, structure: cc.structure, layers: layers, cost: cost, gram: gram, noFit: noFit };
@@ -382,6 +399,7 @@
     state.paper = Object.assign(JSON.parse(JSON.stringify(D.paper || {})), state.paper || {});
     state.paper.pe = Object.assign({ price: 9800, gsm: 18 }, state.paper.pe || {});
     if (state.paper.lossDefault == null) state.paper.lossDefault = 8;
+    if (state.paper.lossStart == null) state.paper.lossStart = 0;
     // 纸库：没有就用 data.js 模板
     if (!state.paperStock || !state.paperStock.length) {
       state.paperStock = JSON.parse(JSON.stringify(D.paperStock || []));
@@ -725,7 +743,7 @@
     parts.push('<span>' + st.name + '</span>');
     cc.layers.forEach(function (L, i) {
       var p = paperById(L.paperId);
-      parts.push('<span>' + (st.layers > 1 ? (i === 0 ? '内 ' : '外 ') : '') + esc(p.name) + ' ' + (num(p.gsm) || '—') + 'g</span>');
+      parts.push('<span>' + (st.layers > 1 ? (i === 0 ? '内 ' : '外 ') : '') + esc(paperLabel(p)) + '</span>');
     });
     parts.push('<span>' + lining().name + '</span>');
     if (state.crafts.length) {
@@ -820,6 +838,12 @@
     if (pl) pl.textContent = st.layers > 1 ? '纸张（内杯 / 外杯）' : '纸张';
   }
 
+  /* 某层的损耗说明：「8% + 调机 3%」（没设调机损耗就只有前半段） */
+  function lossStartTxt(L) {
+    var s = num(L && L.startLoss) || 0;
+    return s > 0 ? ' + 调机 ' + (Math.round(s * 10) / 10) + '%' : '';
+  }
+
   /* 报价页的纸张行：下拉直接换纸（每层各自选），拼版 / 损耗仍去成本页改 */
   function renderPapers() {
     var box = $('#paperLayers');
@@ -834,10 +858,9 @@
       row.appendChild(el('span', 'ptag', st.layers > 1 ? (i === 0 ? '内杯' : '外杯') : '杯身'));
       var sel = document.createElement('select');
       sel.title = '换纸（要加新纸去成本页「纸」）';
-      // 纸名里已带克重（如「食品级杯纸 268g」）就不再重复拼
+      // 纸名里已带克重（如「口杯纸 850×530 268g」）就不再重复拼
       sel.innerHTML = (state.paperStock || []).map(function (m) {
-        var g = num(m.gsm) || 0;
-        var label = m.name + (g && String(m.name).indexOf(String(g)) < 0 ? ' ' + g + 'g' : '');
+        var label = paperLabel(m);
         return '<option value="' + m.id + '"' + (L.paperId === m.id ? ' selected' : '') + '>' + esc(label) + '</option>';
       }).join('');
       sel.onchange = function () {
@@ -845,9 +868,11 @@
         save(); sync();
       };
       row.appendChild(sel);
-      var packN = num(L.pack) > 0 ? num(L.pack) : autoPack(sp, paperById(L.paperId), paperCfg(), i);
-      row.appendChild(el('span', 'ptxt', '拼版 ' +
-        (packN > 0 ? packN + (num(L.pack) > 0 ? '' : '（自动）') : '放不下') + ' ｜ 损耗 ' + (num(L.loss) || 0) + '%'));
+      var pl0 = cupPaperCalc(sp).layers[i] || {};
+      var man = num(L.pack) > 0;
+      var packN = num(pl0.pack) || 0;
+      row.appendChild(el('span', 'ptxt', (packN > 0 ? '拼版 ' + packN + '（' + (man ? '手填' : '自动') + '）' : '拼版放不下') +
+        ' ｜ 损耗 ' + (num(pl0.loss) || 0) + '%' + lossStartTxt(pl0)));
       box.appendChild(row);
     });
     var tip = el('div', 'ptip', '<a href="#" id="lnkCostPaper">去成本页改拼版 / 损耗 / 加新纸 →</a>');
@@ -903,10 +928,10 @@
     var pd = d.pd;
     var lay = pd.layers.map(function (L, i) {
       return (pd.layers.length > 1 ? (i === 0 ? '内杯 ' : '外杯 ') : '') +
-        L.paper.name + ' ' + L.gsm + 'g @' + L.price + '元/吨　¥' + fp(L.bodyCost + (L.bottomCost || 0));
+        paperLabel(L.paper) + ' @' + L.price + '元/吨　¥' + fp(L.bodyCost + L.startCost + (L.bottomCost || 0));
     }).join('　|　');
     var packTxt = pd.layers.map(function (L) {
-      return (pd.layers.length > 1 ? L.name + ' ' : '') + '拼版 ' + L.pack + ' · 损耗 ' + L.loss + '%';
+      return (pd.layers.length > 1 ? L.name + ' ' : '') + '拼版 ' + L.pack + ' · 损耗 ' + L.loss + '%' + lossStartTxt(L);
     }).join('；');
     box.innerHTML =
       '<b>成本构成</b>　纸：' + lay + '　（' + packTxt + '）<br>' +
@@ -1300,7 +1325,7 @@
     var papers = [];
     cupCfg(sp).layers.forEach(function (L, i) {
       var p = paperById(L.paperId);
-      papers.push((st.layers > 1 ? (i === 0 ? '内层 ' : '外层 ') : '') + esc(p.name) + ' ' + (num(p.gsm) || '—') + 'g');
+      papers.push((st.layers > 1 ? (i === 0 ? '内层 ' : '外层 ') : '') + esc(paperLabel(p)));
     });
 
     if (!state._no || state._noDate !== today()) {
@@ -2966,12 +2991,13 @@
     if (!box) return;
     var cfg = paperCfg();
     var html = '';
-    html += '<label><span>默认损耗 (%)</span><input type="number" step="1" data-pp="lossDefault" value="' + cfg.lossDefault + '"><span class="hint">有效拼版 = 拼版 ×(1−损耗)</span></label>';
+    html += '<label><span>正常损耗 (%)</span><input type="number" step="1" data-pp="lossDefault" value="' + cfg.lossDefault + '"><span class="hint">跑机过程中的损耗；有效拼版 = 拼版 ×(1−损耗)</span></label>';
+    html += '<label><span>调机损耗（张/单）</span><input type="number" min="0" step="1" data-pp="lossStart" value="' + cfg.lossStart + '"><span class="hint">每单开机调机报废几张纸，按这一单的数量摊到每只杯；0 = 不算</span></label>';
     box.innerHTML = html;
     $$('#paperGrid input').forEach(function (inp) {
       inp.onchange = function () {
         var k = inp.dataset.pp, v = num(inp.value);
-        var lim = { lossDefault: [0, 90] }[k];
+        var lim = { lossDefault: [0, 90], lossStart: [0, 100000] }[k];
         if (lim) v = Math.min(lim[1], Math.max(lim[0], v));
         state.paper[k] = v;
         save(); renderPaperCfg(); renderPaperTable(); sync();
@@ -3080,6 +3106,7 @@
         '<td class="cap-cell">' + (s.oz || '—') + 'oz / ' + (s.ml || '—') + 'ml</td>' +
         '<td><select data-struct="' + s.id + '">' + optHtml + '</select></td>' +
         '<td class="dim" colspan="9">单杯 <b>' + calc.gram.toFixed(1) + ' g</b>　｜　纸价 <b>¥' + fp(calc.cost) + '</b>/只' +
+        (num(cfg.lossStart) > 0 ? '<span class="mini note">含调机损耗 ' + num(cfg.lossStart) + ' 张/单，按当前订单 ' + num(state.qty) + ' 只摊</span>' : '') +
         (calc.noFit ? '　<span style="color:#c0392b;font-weight:600">⚠ 拼版放不下</span>' : '') + '</td>' +
         '<td class="ops-cell">' + rowOps('spec', s.id, si, specs.length) + '</td>' +
         '</tr>');
@@ -3088,19 +3115,24 @@
         var raw = cc.layers[L.i] || {};
         var pOpts = stock.map(function (p) {
           return '<option value="' + p.id + '"' + (p.id === L.paper.id ? ' selected' : '') + '>' +
-            esc(p.name) + '（' + (num(p.gsm) || '—') + 'g）</option>';
+            esc(p.name) + (num(p.gsm) && String(p.name).indexOf(String(num(p.gsm))) < 0 ? '（' + num(p.gsm) + 'g）' : '') + '</option>';
         }).join('');
         var autoPackN = autoPack(s, L.paper, cfg, L.i);
+        var man = num(raw.pack) > 0;
+        var packTip = man ? '手填值，点右边的「手填」恢复自动' : '留空 = 自动算。填了数字 = 按你填的算';
         rows.push('<tr class="layerrow">' +
           '<td class="dim" colspan="3"></td>' +
           '<td class="dim">' + (L.i === 0 ? '内杯' : '外杯') + '</td>' +
           '<td><select data-paper="' + s.id + '" data-li="' + L.i + '">' + pOpts + '</select></td>' +
-          '<td><input type="number" min="0" step="1" data-pack="' + s.id + '" data-li="' + L.i + '" value="' +
-          (num(raw.pack) > 0 ? num(raw.pack) : '') + '" placeholder="' + autoPackN + '"></td>' +
-          '<td><input type="number" min="0" max="90" step="1" data-loss="' + s.id + '" data-li="' + L.i + '" value="' +
-          (num(raw.loss) || 0) + '"></td>' +
+          '<td class="pack-cell"><div class="pack-wrap"><input type="number" min="0" step="1" data-pack="' + s.id + '" data-li="' + L.i + '" value="' +
+          (man ? num(raw.pack) : '') + '" placeholder="—" title="' + packTip + '">' +
+          '<b class="auto-tag' + (man ? ' man' : '') + '" data-packtag="' + s.id + '" data-li="' + L.i + '" title="' + packTip + '">' +
+          (man ? '手填' : (autoPackN > 0 ? '自动 <u>' + autoPackN + '</u>' : '放不下')) + '</b></div></td>' +
+          '<td class="loss-cell"><input type="number" min="0" max="90" step="1" data-loss="' + s.id + '" data-li="' + L.i + '" value="' +
+          (num(raw.loss) || 0) + '">' +
+          (L.startLoss > 0 ? '<i class="mini">' + lossStartTxt(L).replace(' + ', '') + '</i>' : '') + '</td>' +
           '<td class="dim">' + L.bodyGram.toFixed(1) + ' g</td>' +
-          '<td class="dim">¥' + fp(L.bodyCost) + '</td>' +
+          '<td class="dim">¥' + fp(L.bodyCost + L.startCost) + '</td>' +
           '<td class="dim">' + (L.bottomGram != null ? L.bottomGram.toFixed(1) + ' g' : '—') + '</td>' +
           '<td class="dim">' + (L.bottomCost != null ? '¥' + fp(L.bottomCost) : '—') + '</td>' +
           '<td class="dim">' + ((L.bodyGram + (L.bottomGram || 0)).toFixed(1)) + ' g</td>' +
@@ -3160,6 +3192,16 @@
         if (!L) return;
         var v = inp.value === '' ? 0 : Math.max(0, Math.round(num(inp.value)));
         L.pack = v;
+        save(); renderPaperTable(); sync();
+      };
+    });
+    // 「手填」标记点一下 → 清掉手填值，恢复自动
+    $$('#paperTable [data-packtag].man').forEach(function (tag) {
+      tag.onclick = function () {
+        var c = cupCfg(specById(tag.dataset.packtag));
+        var L = c && (c.layers[num(tag.dataset.li)] || c.layers[0]);
+        if (!L) return;
+        L.pack = 0;
         save(); renderPaperTable(); sync();
       };
     });
