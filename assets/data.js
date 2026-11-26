@@ -181,9 +181,10 @@ window.PC_DATA = (function () {
 
   /* 三档报价：按利润率（毛利率口径） */
   var tiers = [
-    { id: 't1', name: '底价', margin: 0.06 },
-    { id: 't2', name: '标准价', margin: 0.15 },
-    { id: 't3', name: '品牌价', margin: 0.28 }
+    /* 三档毛利：经销商（老客走量）/ 公司（常规）/ 个人（散客小单），毛利率不变 */
+    { id: 't1', name: '经销商', margin: 0.06 },
+    { id: 't2', name: '公司', margin: 0.15 },
+    { id: 't3', name: '个人', margin: 0.28 }
   ];
 
   /* 发货时间模型：基准天数 + 杯型/工艺/克重 各自加天数 */

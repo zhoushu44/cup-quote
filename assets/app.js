@@ -5,7 +5,7 @@
             + 工艺费（按数量梯度）
    注：买来的纸本身就是淋膜纸，PE 涂膜含在纸价里，不再单独计淋膜
    报价 = 成本 ÷ (1 − 毛利率) × (1 + 税率)
-   对客户只展示一个价（默认标准价）
+   对客户只展示一个价（默认「公司」档）
    ============================================================ */
 (function () {
   'use strict';
@@ -40,7 +40,7 @@
     crafts: [],
     plateAmort: false,
     urgent: false,
-    quoteTier: 1,            // 对客户展示哪一档：0 底价 / 1 标准 / 2 品牌
+    quoteTier: 1,            // 对客户展示哪一档：0 经销商 / 1 公司 / 2 个人
     quote: { customer: '', contact: '', date: today(), freight: 0, other: 0, buyerTaxNo: '', buyerAddr: '' },
     invoice: 'none',
     shipping: 'none',
