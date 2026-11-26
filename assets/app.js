@@ -26,6 +26,10 @@
   }
   function fm(x) { return isFinite(x) ? x.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; }
   function fq(x) { return isFinite(x) ? Math.round(x).toLocaleString('zh-CN') : '—'; }
+  /* 正在查看的已保存报价单（见文末「已保存报价单」一节） */
+  var VIEW = { rec: null, dirty: false, stash: null, applying: false, swap: false, fp: '', pendingId: null, pendingDirty: false };
+
+  /* 版面图 / 单号 / 已保存报价单 / 搜索栏 —— 见文末「版面图」「已保存报价单」两节 */
   function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function toast(m) { var t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove('on'); }, 1800); }
@@ -47,6 +51,9 @@
     specOrder: null,        // 杯型显示顺序（id 数组）
     specHidden: [],         // 已删除的内置杯型（id 数组，可恢复）
     specDims: {},           // 内置杯型改过的尺寸 { id: { top, bottom, height } }
+    quoteImg: null,         // 版面图 { src: dataURL, w, h, name }
+    viewId: null,           // 正在查看的已保存报价单 id（刷新后接着显示）
+    viewDirty: false,       // 那张单打开后有没有改过
     craftOrder: null,       // 工艺显示顺序
     customCrafts: [],       // 自定义工艺（id,name,prices,plate,desc）
     shipZones: {},          // 每家快递的分区价表 { sf: [{zones:[zoneId], first, next}, ...] }
@@ -446,6 +453,17 @@
 
   /* ---------------- 存取 ---------------- */
   function save() {
+    // 正在用旧单的成本重画报价单：这时成本表是临时换进去的，绝不能写进本机存档
+    if (VIEW.swap) return;
+    // 查看已保存的报价单时，只要报价内容改了就记一笔（成本页的改动不算）
+    if (VIEW.rec && !VIEW.applying && quoteFp() !== VIEW.fp) {
+      // 旧单改了内容：单号马上换成一个新号（原单号留给原单），点「保存」后生效
+      VIEW.dirty = true;
+      state._no = ''; state._noDate = '';
+      ensureNo();
+      renderDoc();
+      renderBanner();
+    }
     try {
       localStorage.setItem(KEY, JSON.stringify({
         specId: state.specId, cupPaper: state.cupPaper, stockV: 2,
@@ -458,7 +476,9 @@
         specHidden: state.specHidden, specDims: state.specDims,
         invoice: state.invoice, shipping: state.shipping, freightPay: state.freightPay,
         mode: state.mode, tea: state.tea,
-        params: state.params, ocrText: state.ocrText, custOcrText: state.custOcrText
+        params: state.params, ocrText: state.ocrText, custOcrText: state.custOcrText,
+        quoteImg: state.quoteImg,
+        viewId: VIEW.rec ? VIEW.rec.id : null, viewDirty: !!(VIEW.rec && VIEW.dirty)
       }));
       $('#saveState').textContent = '已保存';
     } catch (e) {}
@@ -494,6 +514,8 @@
       if (o.customCrafts) state.customCrafts = o.customCrafts;
       if (o.specDims) state.specDims = o.specDims;
       if (o.specHidden) state.specHidden = o.specHidden;
+      if (o.quoteImg && o.quoteImg.src) state.quoteImg = o.quoteImg;
+      if (o.viewId) { VIEW.pendingId = String(o.viewId); VIEW.pendingDirty = !!o.viewDirty; }
       applySpecDims();
       if (o.boxCfg) state.boxCfg = o.boxCfg;
       if (o.addon) state.addon = Object.assign(state.addon, o.addon);
@@ -1346,11 +1368,7 @@
       papers.push((st.layers > 1 ? (i === 0 ? '内层 ' : '外层 ') : '') + esc(paperLabel(p)));
     });
 
-    if (!state._no || state._noDate !== today()) {
-      var d = new Date();
-      state._noDate = today();
-      state._no = 'PC' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + String(Math.floor(Math.random() * 900 + 100));
-    }
+    ensureNo();
 
     // 明细行：杯子本体 + 版费 + 运费 + 其他
     var items = [];
@@ -1492,11 +1510,7 @@
     var r = teaCalc();
     var inv = invoiceObj(), ship = shippingObj();
 
-    if (!state._no || state._noDate !== today()) {
-      var d = new Date();
-      state._noDate = today();
-      state._no = 'PC' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + String(Math.floor(Math.random() * 900 + 100));
-    }
+    ensureNo();
 
     var items = [{
       idx: 1,
@@ -1561,10 +1575,19 @@
     var q = buildQuote();
     var s = q.spec;
     var c = q.company;
+    // 版面图：有图才多一列，放在「品名及规格」前面，只显示在第一行（杯子那一行）
+    renderQuoteImg();
+    quoteImgEl();                                              // 顺手开始解码（下载图片 / 复制图片要用）
+    var hasImg = !!state.quoteImg;
+    var imgCell = function (on) {
+      return hasImg ? '<td class="imgc">' + (on ? '<img src="' + state.quoteImg.src + '" alt="版面图">' : '') + '</td>' : '';
+    };
+    var nCol = 6 + (hasImg ? 1 : 0);
 
-    var trs = q.items.map(function (it) {
+    var trs = q.items.map(function (it, i) {
       return '<tr>' +
         '<td class="c">' + it.idx + '</td>' +
+        imgCell(i === 0) +
         '<td><b>' + esc(it.name) + '</b>' + (it.spec ? '<span class="sub2">' + esc(it.spec) + '</span>' : '') +
         (it.craft ? it.craft.split('<br>').map(function (seg) { return '<span class="sub2">' + esc(seg) + '</span>'; }).join('') : '') + '</td>' +
         '<td class="c">' + it.unit + '</td>' +
@@ -1629,6 +1652,7 @@
         '<table class="qdoc-body">' +
           '<thead><tr>' +
             '<th class="c" style="width:34px">序号</th>' +
+            (hasImg ? '<th class="c" style="width:64px">版面图</th>' : '') +
             '<th>品名及规格</th>' +
             '<th class="c" style="width:46px">单位</th>' +
             '<th class="r" style="width:78px">数量</th>' +
@@ -1636,8 +1660,8 @@
             '<th class="r" style="width:92px">金额(元)</th>' +
           '</tr></thead>' +
           '<tbody>' + trs +
-            '<tr class="sum"><td colspan="5" class="r">合计金额（' + (taxRate() > 0 ? '含税' : '不含税') + '）</td><td class="r b">' + fm(q.total) + '</td></tr>' +
-            '<tr class="cn"><td colspan="6">金额大写：' + moneyCN(q.total) + '</td></tr>' +
+            '<tr class="sum"><td colspan="' + (nCol - 1) + '" class="r">合计金额（' + (taxRate() > 0 ? '含税' : '不含税') + '）</td><td class="r b">' + fm(q.total) + '</td></tr>' +
+            '<tr class="cn"><td colspan="' + nCol + '">金额大写：' + moneyCN(q.total) + '</td></tr>' +
           '</tbody>' +
         '</table>' +
         '<div class="qdoc-terms">' +
@@ -1663,6 +1687,7 @@
     if (q.buyerAddr) L.push('地址：' + q.buyerAddr);
     L.push('');
     L.push('序号　品名及规格');
+    if (state.quoteImg) L.push('（附版面图一张）');
     q.items.forEach(function (it) {
       L.push(' ' + it.idx + '　　' + it.name);
       if (it.spec) L.push('　　　' + it.spec);
@@ -1905,8 +1930,13 @@
     var c = contractData(opt);
     var W = function (n) { return n ? esc(n) : '　　　　　　　　'; };
 
-    var rows = c.items.map(function (it) {
-      return '<tr>' +
+    // 版面图：有图才多一列，放在「定作物品名称」前面
+    var hasImg = !!state.quoteImg;
+    var imgH = hasImg ? '<th style="width:7%">图片</th>' : '';
+    var imgD = function (on) { return hasImg ? '<td class="c imgc">' + (on ? '<img src="' + state.quoteImg.src + '" alt="版面图">' : '') + '</td>' : ''; };
+
+    var rows = c.items.map(function (it, i) {
+      return '<tr>' + imgD(i === 0) +
         '<td>' + esc(it.name) + '</td>' +
         '<td>' + esc(it.spec || '—') + '</td>' +
         '<td class="c">' + esc(it.unit) + '</td>' +
@@ -1936,6 +1966,7 @@
       'table.items td.c { text-align:center; } table.items td.r { text-align:right; }' +
       'table.items td.sm { font-size:8.5pt; }' +
       'table.items td.cn { font-size:8pt; line-height:1.35; word-break:break-all; }' +
+      'table.items td.imgc img { width:2.1cm; height:2.1cm; object-fit:contain; display:block; margin:0 auto; }' +
       'p { margin: 3pt 0; text-align: justify; }' +
       'table.sign { width:100%; border-collapse:collapse; margin-top:14pt; font-size:9.5pt; table-layout:fixed; }' +
       'table.sign td { border:0.5pt solid #000; padding:6pt 8pt; vertical-align:top; width:50%; }' +
@@ -1949,13 +1980,15 @@
       '<div class="lead">承揽方：' + W(c.taker.name) + '</div>' +
       '<div class="lead">品名或项目、规格型号、数量、单价、金额。</div>' +
 
-      '<table class="items"><thead><tr>' +
-      '<th style="width:22%">定作物品名称</th><th style="width:19%">规格型号</th>' +
+      '<table class="items"><thead><tr>' + imgH +
+      (hasImg
+        ? '<th style="width:17%">定作物品名称</th><th style="width:16%">规格型号</th><th style="width:6%">单位</th><th style="width:9%">数量</th><th style="width:10%">单价</th><th style="width:12%">总金额</th><th style="width:23%">备注</th>'
+        : '<th style="width:22%">定作物品名称</th><th style="width:19%">规格型号</th>' +
       '<th style="width:7%">单位</th><th style="width:10%">数量</th>' +
       '<th style="width:11%">单价</th><th style="width:13%">总金额</th>' +
-      '<th style="width:18%">备注</th>' +
+      '<th style="width:18%">备注</th>') +
       '</tr></thead><tbody>' + rows +
-      '<tr><td colspan="5" class="r"><b>合计</b></td><td class="r"><b>' + fm(c.total) + '</b></td><td class="sm cn">' + moneyCN(c.total) + '</td></tr>' +
+      '<tr><td colspan="' + (5 + (hasImg ? 1 : 0)) + '" class="r"><b>合计</b></td><td class="r"><b>' + fm(c.total) + '</b></td><td class="sm cn">' + moneyCN(c.total) + '</td></tr>' +
       '</tbody></table>' +
 
       clauses +
@@ -1998,11 +2031,19 @@
     B += D3.p('承揽方：' + W_(c.taker.name), { sz: 21, after: 60 });
     B += D3.p('品名或项目、规格型号、数量、单价、金额。', { sz: 21, after: 80 });
 
-    /* 明细表 */
-    var cols = [2120, 1830, 680, 960, 1060, 1260, 1728];
+    /* 明细表（有版面图时最前面多一列） */
+    var img = quoteImgBytes();                      // { bytes, w, h } 或 null
+    var cols = img ? [1000, 1800, 1500, 640, 900, 1000, 1200, 1598] : [2120, 1830, 680, 960, 1060, 1260, 1728];
+    // 图在 Word 里最大 1.55cm 见方（1cm = 360000 EMU），等比缩放
+    var imgCell = function (on) {
+      if (!img) return [];
+      if (!on) return [{ img: null }];
+      var k = Math.min(558000 / img.w, 558000 / img.h);
+      return [{ img: { rid: 'rIdImg1', cx: Math.round(img.w * k), cy: Math.round(img.h * k) } }];
+    };
     var rows = [{
       header: true,
-      cells: [
+      cells: (img ? [{ text: '图片', align: 'center', font: H, shade: 'F2F2F2' }] : []).concat([
         { text: '定作物品名称', align: 'center', font: H, shade: 'F2F2F2' },
         { text: '规格型号', align: 'center', font: H, shade: 'F2F2F2' },
         { text: '单位', align: 'center', font: H, shade: 'F2F2F2' },
@@ -2010,12 +2051,12 @@
         { text: '单价', align: 'center', font: H, shade: 'F2F2F2' },
         { text: '总金额', align: 'center', font: H, shade: 'F2F2F2' },
         { text: '备注', align: 'center', font: H, shade: 'F2F2F2' }
-      ]
+      ])
     }];
 
-    c.items.forEach(function (it) {
+    c.items.forEach(function (it, i) {
       rows.push({
-        cells: [
+        cells: imgCell(i === 0).concat([
           { text: it.name },
           { text: it.spec || '—' },
           { text: it.unit, align: 'center' },
@@ -2023,16 +2064,16 @@
           { text: fm(it.price), align: 'right' },
           { text: fm(it.amount), align: 'right' },
           { text: it.note || '', sz: 16 }
-        ]
+        ])
       });
     });
 
     rows.push({
-      cells: [
+      cells: (img ? [{ text: '', span: 1 }] : []).concat([
         { text: '合计', span: 5, align: 'right', b: true, shade: 'F8F6F2' },
         { text: fm(c.total), align: 'right', b: true, shade: 'F8F6F2' },
         { text: moneyCN(c.total), sz: 16, shade: 'F8F6F2' }
-      ]
+      ])
     });
 
     B += D3.tbl(rows, { width: W, cols: cols });
@@ -2075,7 +2116,7 @@
     }];
     B += D3.tbl(signRows, { width: W, cols: [Math.round(W / 2), Math.round(W / 2)] });
 
-    return D3.build(B, c.title + ' ' + c.no);
+    return D3.build(B, c.title + ' ' + c.no, img ? [{ name: 'image1.jpeg', data: img.bytes }] : null);
   }
 
   function exportContract() {
@@ -2242,10 +2283,13 @@
 
     // 高度预估
     var idxW = 34, unitW = 44, qtyW = 74, priceW = 76, amtW = 88;
-    var nameW = maxW - idxW - unitW - qtyW - priceW - amtW;
+    // 版面图：有图才多一列，放在「品名及规格」前面，只画在第一行（杯子那一行）
+    var hasImg = !!state.quoteImg, imgW = hasImg ? 60 : 0;
+    var im = quoteImgEl();
+    var nameW = maxW - idxW - imgW - unitW - qtyW - priceW - amtW;
     var rowH = [];
     var sumRow = 0;
-    q.items.forEach(function (it) {
+    q.items.forEach(function (it, i) {
       var h = 20;
       if (it.spec) h += 14;
       if (it.craft) {
@@ -2253,6 +2297,7 @@
           h += Math.round(14 * lineCount(ctx, seg, nameW - 14));
         });
       }
+      if (i === 0 && hasImg) h = Math.max(h, 62);
       var rh = Math.max(30, h);
       rowH.push(rh);
       sumRow += rh;
@@ -2330,7 +2375,7 @@
 
     /* ---- 明细表 ---- */
     y += 4;
-    var x0 = pad, x1 = x0 + idxW, x2 = x1 + nameW, x3 = x2 + unitW, x4 = x3 + qtyW, x5 = x4 + priceW, x6 = x5 + amtW;
+    var x0 = pad, x1 = x0 + idxW, xi = x1 + imgW, x2 = xi + nameW, x3 = x2 + unitW, x4 = x3 + qtyW, x5 = x4 + priceW, x6 = x5 + amtW;
 
     // 表头
     ctx.fillStyle = '#f2f0ec';
@@ -2338,7 +2383,8 @@
     ctx.fillStyle = '#333';
     ctx.font = '600 10px "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'center'; ctx.fillText('序号', x0 + idxW / 2, y + 17);
-    ctx.textAlign = 'left'; ctx.fillText('品名及规格', x1 + 8, y + 17);
+    if (hasImg) ctx.fillText('版面图', x1 + imgW / 2, y + 17);
+    ctx.textAlign = 'left'; ctx.fillText('品名及规格', xi + 8, y + 17);
     ctx.textAlign = 'center'; ctx.fillText('单位', x2 + unitW / 2, y + 17);
     ctx.textAlign = 'right'; ctx.fillText('数量', x3 + qtyW - 6, y + 17);
     ctx.fillText('单价(元)', x4 + priceW - 6, y + 17);
@@ -2355,18 +2401,30 @@
       ctx.font = '400 10.5px "Microsoft YaHei", sans-serif';
       ctx.fillText(String(it.idx), x0 + idxW / 2, y + 16);
 
+      // 版面图：缩放进 46×46 的方框里，保持原比例
+      if (i === 0 && hasImg) {
+        var bx = x1 + 7, by = y + (h - 46) / 2;
+        ctx.strokeStyle = '#ddd';
+        ctx.strokeRect(bx + 0.5, by + 0.5, 45, 45);
+        if (im) {
+          var k = Math.min(44 / im.naturalWidth, 44 / im.naturalHeight);
+          var dw = im.naturalWidth * k, dh = im.naturalHeight * k;
+          ctx.drawImage(im, bx + 23 - dw / 2, by + 23 - dh / 2, dw, dh);
+        }
+      }
+
       ctx.textAlign = 'left';
       ctx.font = '600 11px "Microsoft YaHei", sans-serif';
-      ctx.fillText(it.name, x1 + 8, y + 16);
+      ctx.fillText(it.name, xi + 8, y + 16);
 
       ctx.font = '400 9.5px "Microsoft YaHei", sans-serif';
       ctx.fillStyle = '#777';
       var ty = y + 30;
-      if (it.spec) { ctx.fillText(it.spec, x1 + 8, ty); ty += 14; }
+      if (it.spec) { ctx.fillText(it.spec, xi + 8, ty); ty += 14; }
       if (it.craft) {
         it.craft.split('<br>').forEach(function (seg) {
           var n = lineCount(ctx, seg, nameW - 16);
-          wrap(ctx, seg, x1 + 8, ty, nameW - 16, 13);
+          wrap(ctx, seg, xi + 8, ty, nameW - 16, 13);
           ty += 13 * n;
         });
       }
@@ -4370,7 +4428,21 @@
   }
 
   /* ---------------- 同步 ---------------- */
+  /* 正在查看一张已保存的报价单、而且没改过 → 临时换成它当时的成本表来算，
+     这样页面上的价格和当时发给客户的一模一样；成本页始终显示现在的成本表 */
   function sync() {
+    if (VIEW.rec && !VIEW.dirty && VIEW.rec.cost && VIEW.rec.cost.s) {
+      var costOn = $('#page-cost').classList.contains('on');
+      withCost(VIEW.rec.cost, function () { syncCore(true); });
+      if (costOn) renderCostTables();
+      return;
+    }
+    syncCore(false);
+  }
+
+  function renderCostTables() { renderPaperTable(); renderProcTable(); renderCraftTable(); renderWeightTable(); }
+
+  function syncCore(swapped) {
     ['#specSelect', '#specSelect2'].forEach(function (s) { var n = $(s); if (n) n.value = state.specId; });
     ['#qtyInput', '#qtyInput2'].forEach(function (s) { var n = $(s); if (n) n.value = state.qty; });
     renderSpecLine();
@@ -4385,7 +4457,7 @@
     renderWeightBox();
     renderDoc();
     save();
-    if ($('#page-cost').classList.contains('on')) { renderPaperTable(); renderProcTable(); renderCraftTable(); renderWeightTable(); }
+    if (!swapped && $('#page-cost').classList.contains('on')) renderCostTables();
   }
 
   function page(name) {
@@ -4419,6 +4491,10 @@
   }
 
   function bind() {
+    initQuoteImg();
+    initView();
+    initSearch();
+
     $$('.mode-btn').forEach(function (b) {
       b.onclick = function () { switchMode(b.dataset.mode); };
     });
@@ -4706,6 +4782,439 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
+  /* ==================== 版面图 ==================== */
+  var IMG = { key: '', el: null };          // 已解码的图片元素，画到画布上要用
+
+  function renderQuoteImg() {
+    var box = $('#quoteImgBox');
+    if (!box) return;
+    var im = state.quoteImg;
+    box.style.display = im ? '' : 'none';
+    if (im) { var v = $('#quoteImgView'); if (v.getAttribute('src') !== im.src) v.src = im.src; }
+  }
+
+  /* 拿到已加载完的图片元素；还没加载完就返回 null（加载完会自动重画报价单） */
+  function quoteImgEl() {
+    var im = state.quoteImg;
+    if (!im) return null;
+    if (IMG.key !== im.src) {
+      var el = new Image();
+      IMG = { key: im.src, el: el };
+      el.onload = function () {
+        if (IMG.el !== el) return;
+        if ($('#page-quote').classList.contains('on')) renderDoc();
+      };
+      el.src = im.src;
+    }
+    return (IMG.el.complete && IMG.el.naturalWidth) ? IMG.el : null;
+  }
+
+  /* 版面图的原始字节（生成 Word 合同要嵌进去） */
+  function quoteImgBytes() {
+    var im = state.quoteImg;
+    if (!im || !/^data:image\/(jpeg|png);base64,/i.test(im.src)) return null;
+    var b64 = im.src.split(',')[1], bin = atob(b64), u = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return { bytes: u, w: im.w, h: im.h };
+  }
+
+  /* 上传的图先缩小再存：最长边 1400 像素、转成 JPG。
+     原图动辄好几 MB，直接存会撑爆浏览器的本机存储，报价单上也用不着那么大 */
+  function compressQuoteImg(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\//.test(file.type)) { reject(new Error('这不是图片文件')); return; }
+      if (file.size > 30 * 1024 * 1024) { reject(new Error('图片超过 30MB，太大了')); return; }
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('图片打不开，换一张试试')); };
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        try {
+          var k = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+          var w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+          var cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          var ctx = cv.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);       // 透明底转成白底
+          ctx.drawImage(img, 0, 0, w, h);
+          var q = 0.85, src;
+          for (var n = 0; n < 4; n++) {                             // 还太大就再降一点画质
+            src = cv.toDataURL('image/jpeg', q);
+            if (src.length < 900000 || q <= 0.55) break;
+            q -= 0.1;
+          }
+          var done = new Image();                                  // 先解码好，画布出图时才来得及用
+          var out = { src: src, w: w, h: h, name: (file.name || '版面图').slice(0, 60) };
+          done.onload = function () { out.el = done; resolve(out); };
+          done.onerror = function () { resolve(out); };
+          done.src = src;
+        } catch (e) { reject(new Error('图片处理失败')); }
+      };
+      img.src = url;
+    });
+  }
+
+  function loadQuoteImg(file) {
+    compressQuoteImg(file).then(function (im) {
+      if (im.el) IMG = { key: im.src, el: im.el };            // 已解码好的图直接记下，马上点「复制图片」也来得及画
+      delete im.el;
+      state.quoteImg = im;
+      toast('版面图已加入，会显示在报价单和合同里');
+      page('quote');
+      sync();
+    }).catch(function (e) { toast(e.message || '图片处理失败'); });
+  }
+
+  function initQuoteImg() {
+    var f = $('#fileQuoteImg');
+    if (f) f.onchange = function () { var file = this.files[0]; this.value = ''; if (file) loadQuoteImg(file); };
+    var del = $('#btnQuoteImgDel');
+    if (del) del.onclick = function () {
+      if (!confirm('移除版面图？报价单和合同里就不再显示图片')) return;
+      state.quoteImg = null;
+      sync();
+    };
+    // 在报价页直接 Ctrl+V 粘贴截图
+    document.addEventListener('paste', function (e) {
+      if (!$('#page-quote').classList.contains('on')) return;
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file' && /^image\//.test(items[i].type)) {
+          e.preventDefault();
+          loadQuoteImg(items[i].getAsFile());
+          return;
+        }
+      }
+    });
+  }
+
+  /* ==================== 服务器接口 ==================== */
+  var API_ON = /^https?:$/.test(location.protocol);       // 双击本地打开的文件没有服务器
+
+  function api(method, path, body) {
+    if (!API_ON) return Promise.resolve({ ok: false, error: '本地打开的文件没有服务器，请在正式网址上使用' });
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 20000);
+    return fetch(path, {
+      method: method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) {
+        return (j && j.ok) ? j : { ok: false, error: (j && j.error) || ('服务器返回 ' + r.status) };
+      });
+    }).catch(function () {
+      return { ok: false, error: '连不上服务器，请检查网络后重试' };
+    }).then(function (j) { clearTimeout(timer); return j; });
+  }
+
+  /* ==================== 单号 ==================== */
+  /* PC + 日期 + 三位流水。流水号先问服务器（多人同时用时大家从同一个数往后排），
+     问不到（本地打开 / 断网）就先用随机的，保存时服务器发现重号会再调 */
+  var SEQ = { date: '', next: 0 };
+
+  function ymd8(d) {
+    d = d || new Date();
+    return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+  }
+
+  function refreshSeq() {
+    return api('GET', '/api/seq?date=' + ymd8()).then(function (r) {
+      if (r.ok) SEQ = { date: today(), next: num(r.next) || 100 };
+      return r;
+    });
+  }
+
+  function ensureNo() {
+    // 查看一张没改过的已保存报价单：单号就是那张单的，不换
+    if (VIEW.rec && !VIEW.dirty) { state._no = VIEW.rec.no; state._noDate = today(); return; }
+    if (state._no && state._noDate === today()) return;
+    state._noDate = today();
+    var n = (SEQ.date === today() && SEQ.next > 0) ? String(SEQ.next++) : String(Math.floor(Math.random() * 900 + 100));
+    state._no = 'PC' + ymd8() + '-' + n;
+  }
+
+  /* ==================== 已保存报价单 ==================== */
+  /* 一张报价单 = 报价内容（inputs，客户 / 杯型 / 数量 / 工艺 / 版面图…）
+     + 当时的成本表（cost）。打开旧单时成本表只是临时换进去算一下，不覆盖现在的成本表 */
+  var QUOTE_KEYS = ['specId', 'lining', 'qty', 'crafts', 'plateAmort', 'urgent', 'quoteTier', 'quote', 'invoice', 'shipping', 'freightPay',
+    'mode', 'tea', 'ocrText', 'custOcrText', 'quoteImg', '_no', '_noDate'];
+  var FP_KEYS = QUOTE_KEYS.filter(function (k) { return k !== '_no' && k !== '_noDate'; });
+  var COST_KEYS = ['cupPaper', 'gradients', 'paper', 'paperStock', 'proc', 'craftGrid', 'addon', 'lead', 'shipGrid', 'wt', 'boxCfg',
+    'shipZones', 'customSpecs', 'customCrafts', 'specOrder', 'craftOrder', 'specHidden', 'specDims', 'params'];
+  var D_KEYS = ['tea', 'company', 'tiers', 'invoices'];
+
+  function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+  function pick(o, keys) { var r = {}; keys.forEach(function (k) { r[k] = o[k]; }); return r; }
+  function isPlainObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+  function quoteFp() { return JSON.stringify(pick(state, FP_KEYS)); }
+
+  function costSnapshot() { return { s: clone(pick(state, COST_KEYS)), d: clone(pick(D, D_KEYS)) }; }
+
+  /* 临时换成某一版成本表来跑 fn，跑完立刻换回来。
+     期间 save() 不写本机存档（见 save 开头），免得把旧成本写进现在的存档 */
+  function withCost(snap, fn) {
+    if (!snap || !snap.s) return fn();
+    var keepS = pick(state, COST_KEYS), keepD = pick(D, D_KEYS);
+    VIEW.swap = true;
+    try {
+      COST_KEYS.forEach(function (k) {
+        var a = keepS[k], b = snap.s[k];
+        if (b === undefined) return;
+        // 普通对象：旧单没有的项沿用现在的（以后新加的字段），数组和其它直接整个换
+        state[k] = (isPlainObj(a) && isPlainObj(b)) ? Object.assign({}, a, clone(b)) : clone(b);
+      });
+      D_KEYS.forEach(function (k) { if (snap.d && snap.d[k] !== undefined) D[k] = clone(snap.d[k]); });
+      applySpecDims();
+      return fn();
+    } finally {
+      COST_KEYS.forEach(function (k) { state[k] = keepS[k]; });
+      D_KEYS.forEach(function (k) { D[k] = keepD[k]; });
+      applySpecDims();
+      VIEW.swap = false;
+    }
+  }
+
+  /* 按现在的成本表算一遍（只用来对比价格和当时一样不一样） */
+  function liveQuote() {
+    var keep = VIEW.rec, no = state._no, nd = state._noDate;
+    VIEW.rec = null;
+    try { return buildQuote(); } finally { VIEW.rec = keep; state._no = no; state._noDate = nd; }
+  }
+
+  function fmtTs(ts) {
+    var d = new Date(ts);
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  /* 报价单上方的提示条：正在看哪张旧单、有没有改过、按现价算是多少 */
+  function renderBanner() {
+    var b = $('#savedBanner');
+    if (!b) return;
+    var rec = VIEW.rec;
+    if (!rec) { b.style.display = 'none'; b.innerHTML = ''; return; }
+    b.style.display = '';
+    b.classList.toggle('changed', VIEW.dirty);
+    var html;
+    if (VIEW.dirty) {
+      html = '正在修改已保存的报价单 <b class="sb-no">' + esc(rec.no) + '</b>　<span class="dim">有改动，价格已按<b>现在的成本</b>重新计算；点「保存」会存成新单号 ' +
+        esc(state._no) + '，原单保持不变</span>';
+    } else {
+      html = '正在查看已保存的报价单 <b class="sb-no">' + esc(rec.no) + '</b>　<span class="dim">' + fmtTs(rec.ts) + ' 保存 · 按当时的成本计算，价格与当时一致</span>';
+      try {
+        var now = liveQuote(), was = state._q || buildQuote();
+        if (Math.abs(now.total - was.total) > 0.005 || Math.abs(now.price - was.price) > 0.0001) {
+          html += '　<span class="sb-diff">按现在的成本重算：单价 ¥' + fm(now.price) + '、合计 ¥' + fm(now.total) + '，和当时不一样</span>';
+        }
+      } catch (e) {}
+    }
+    b.innerHTML = '<span class="sb-tag">' + (VIEW.dirty ? '已修改' : '已保存') + '</span>' + html +
+      '<span class="sb-btns">' +
+      '<button data-act="close" title="关掉这张旧单，回到刚才在做的内容">' + (VIEW.stash ? '退出查看，回到刚才的内容' : '退出查看') + '</button>' +
+      '<button data-act="del" class="danger">删除这张</button></span>';
+  }
+
+  function applyInputs(inp) {
+    QUOTE_KEYS.forEach(function (k) { if (inp[k] !== undefined) state[k] = clone(inp[k]); });
+    VIEW.applying = true;
+    try { switchMode(state.mode); } finally { VIEW.applying = false; }
+  }
+
+  /* 打开一张已保存的报价单：页面恢复成当时的内容，价格按当时的成本算 */
+  function openRecord(rec, opt) {
+    opt = opt || {};
+    // 记住打开之前在做的内容：没保存的新单，或者一张改到一半的旧单（回来时接着改）
+    if (!opt.noStash && (!VIEW.rec || VIEW.dirty)) {
+      VIEW.stash = { inputs: clone(pick(state, QUOTE_KEYS)), rec: VIEW.dirty ? VIEW.rec : null };
+    }
+    VIEW.rec = rec;
+    VIEW.dirty = !!opt.dirty;
+    VIEW.applying = true;
+    try {
+      page('quote');
+      applyInputs(rec.inputs || {});
+      state._no = rec.no; state._noDate = today();
+      sync();
+      VIEW.fp = quoteFp();
+    } finally { VIEW.applying = false; }
+    renderBanner();
+    renderQuoteImg();
+    window.scrollTo(0, 0);
+  }
+
+  function openById(id, opt) {
+    return api('GET', '/api/quote/' + encodeURIComponent(id)).then(function (r) {
+      if (!r.ok) { toast(r.error || '这张报价单打不开'); forgetRecord(); return r; }
+      var x = r.record;
+      openRecord({ id: x.id, no: x.no, ts: x.ts, inputs: (x.data || {}).inputs || {}, cost: (x.data || {}).cost || null }, opt);
+      return r;
+    });
+  }
+
+  function forgetRecord() {
+    if (!VIEW.rec && !VIEW.pendingId) return;
+    VIEW.rec = null; VIEW.dirty = false; VIEW.pendingId = null;
+    state._no = ''; state._noDate = '';
+    save();
+  }
+
+  /* 退出查看：回到打开旧单之前在做的单 */
+  function closeRecord() {
+    var st = VIEW.stash;
+    VIEW.rec = null; VIEW.dirty = false; VIEW.stash = null;
+    if (st) {
+      VIEW.rec = st.rec || null;                               // 之前是改到一半的旧单 → 接着改
+      VIEW.dirty = !!st.rec;
+      applyInputs(st.inputs);
+    } else {
+      state._no = ''; state._noDate = '';
+    }
+    sync();
+    renderBanner();
+  }
+
+  function deleteRecord(id, no) {
+    if (!confirm('删除报价单 ' + no + '？删除后不能恢复。')) return;
+    api('DELETE', '/api/quote/' + encodeURIComponent(id)).then(function (r) {
+      if (!r.ok) { toast(r.error || '删除失败'); return; }
+      toast('已删除 ' + no);
+      if (VIEW.rec && VIEW.rec.id === id) closeRecord();
+      qsRefresh();
+    });
+  }
+
+  /* 报价单上的「保存」 */
+  function saveQuote() {
+    if (VIEW.saving) return;
+    if (VIEW.rec && !VIEW.dirty) { toast('这张报价单已经保存过了，还没有改动'); return; }
+    var q = state._q || buildQuote();
+    var inputs = clone(pick(state, QUOTE_KEYS));
+    var again = !!VIEW.rec;                                   // 看着一张旧单再保存 = 另存新单号
+    VIEW.saving = true;
+    toast('正在保存…');
+    api('POST', '/api/quote', {
+      no: again ? '' : state._no,
+      spec: (q.spec && q.spec.name) || '',
+      total: q.total,
+      data: { inputs: inputs, cost: costSnapshot() }
+    }).then(function (r) {
+      VIEW.saving = false;
+      if (!r.ok) { toast(r.error || '保存失败'); return; }
+      var changed = r.no !== state._no;
+      inputs._no = r.no;
+      VIEW.rec = { id: r.id, no: r.no, ts: r.ts, inputs: inputs, cost: costSnapshot() };
+      VIEW.dirty = false;                                   // stash 不清：那是来查旧单之前在做的内容，退出查看时还要回去
+      state._no = r.no; state._noDate = today();
+      VIEW.fp = quoteFp();
+      refreshSeq();
+      save();
+      renderDoc();
+      renderBanner();
+      toast(changed ? '已保存，单号 ' + r.no : '已保存');
+    }).catch(function () { VIEW.saving = false; });
+  }
+
+  /* 刷新页面后接着显示上次在看的那张旧单 */
+  function initView() {
+    if (!API_ON) return;
+    if (VIEW.pendingId) {
+      var id = VIEW.pendingId, dirty = VIEW.pendingDirty;
+      VIEW.pendingId = null;
+      openById(id, { noStash: true, dirty: dirty });
+    } else {
+      refreshSeq();
+    }
+  }
+
+  /* ==================== 顶部搜索栏 ==================== */
+  var qs = { timer: 0, q: null, rows: [], idx: -1, seq: 0 };
+
+  function qsHide() { var d = $('#qSearchDrop'); if (d) d.style.display = 'none'; qs.idx = -1; }
+
+  function qsRefresh() { if (qs.q !== null) { var k = qs.q; qs.q = null; qsQuery(k); } }
+
+  function qsQuery(q) {
+    var drop = $('#qSearchDrop');
+    if (!drop) return;
+    var my = ++qs.seq;                                       // 只认最后一次请求的结果（输得快时前后会乱序回来）
+    api('GET', '/api/search?q=' + encodeURIComponent(q)).then(function (r) {
+      if (my !== qs.seq) return;
+      qs.q = q;
+      qs.rows = r.ok ? r.list : [];
+      qs.idx = -1;
+      if (!r.ok) {
+        drop.innerHTML = '<div class="qs-empty">' + esc(r.error || '搜索不了') + '</div>';
+      } else if (!qs.rows.length) {
+        drop.innerHTML = '<div class="qs-empty">' + (q ? '没有找到「' + esc(q) + '」相关的报价单' : '还没有保存过报价单') + '</div>';
+      } else {
+        drop.innerHTML = (q ? '' : '<div class="qs-head">最近保存</div>') + qs.rows.map(function (x, i) {
+          return '<div class="qs-item" data-id="' + esc(x.id) + '" data-i="' + i + '">' +
+            '<span class="qs-no">' + esc(x.no) + '</span>' +
+            '<span class="qs-cust">' + esc(x.cust || '（没填客户）') + (x.contact ? '<i>' + esc(x.contact) + '</i>' : '') + '</span>' +
+            '<span class="qs-spec">' + esc(x.spec || '') + (x.qty ? ' · ' + fq(x.qty) : '') + '</span>' +
+            '<span class="qs-amt">' + (x.total ? '¥' + fm(x.total) : '') + '</span>' +
+            '<span class="qs-date">' + fmtTs(x.ts) + '</span>' +
+            '<button class="qs-del" data-del="' + esc(x.id) + '" data-no="' + esc(x.no) + '" title="删除这张报价单">×</button>' +
+            '</div>';
+        }).join('');
+      }
+      drop.style.display = '';
+    });
+  }
+
+  function qsMark() {
+    $$('#qSearchDrop .qs-item').forEach(function (n, i) { n.classList.toggle('on', i === qs.idx); });
+  }
+
+  function initSearch() {
+    var inp = $('#qSearchInput'), drop = $('#qSearchDrop');
+    if (!inp || !drop) return;
+    if (!API_ON) { inp.disabled = true; inp.placeholder = '本地打开没有搜索（请在正式网址上用）'; return; }
+    inp.addEventListener('input', function () {
+      clearTimeout(qs.timer);
+      var v = inp.value.trim();
+      qs.timer = setTimeout(function () { qsQuery(v); }, 180);
+    });
+    inp.addEventListener('focus', function () { var v = inp.value.trim(); clearTimeout(qs.timer); qs.q = null; qsQuery(v); });
+    inp.addEventListener('blur', function () { setTimeout(qsHide, 160); });
+    inp.addEventListener('keydown', function (e) {
+      var items = $$('#qSearchDrop .qs-item');
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!items.length) return;
+        e.preventDefault();
+        qs.idx = (qs.idx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        qsMark();
+        items[qs.idx].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') {
+        if (qs.idx >= 0 && items[qs.idx]) { e.preventDefault(); items[qs.idx].click(); }
+      } else if (e.key === 'Escape') {
+        qsHide(); inp.blur();
+      }
+    });
+    // 按下时不让输入框失焦，否则列表先消失、点击就落空
+    drop.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    drop.addEventListener('click', function (e) {
+      var del = e.target.closest('.qs-del');
+      if (del) { deleteRecord(del.dataset.del, del.dataset.no); return; }
+      var it = e.target.closest('.qs-item');
+      if (!it) return;
+      var row = qs.rows[+it.dataset.i];
+      if (!row) return;
+      $('#qSearchInput').value = row.no;
+      qsHide();
+      openById(row.id, {});
+    });
+    var banner = $('#savedBanner');
+    if (banner) banner.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-act]');
+      if (!b || !VIEW.rec) return;
+      if (b.dataset.act === 'close') closeRecord();
+      else if (b.dataset.act === 'del') deleteRecord(VIEW.rec.id, VIEW.rec.no);
+    });
+    var sb = $('#btnSaveQuote');
+    if (sb) sb.onclick = saveQuote;
+  }
+
   /* 右上角显示当前版本：取自脚本地址里的 ?v=（打镜像时填的提交号），用来确认浏览器跑的是不是新版 */
   (function () {
     var sc = document.querySelector('script[src*="app.js"]');
@@ -4724,6 +5233,9 @@
     shipAutoCalc: shipAutoCalc, shipCost: shipCost, curGram: curGram,
     build: buildQuote, text: quoteText, draw: drawDoc, moneyCN: moneyCN,
     contract: contractData, contractHTML: contractHTML, contractDOCX: contractDOCX,
-    recognize: recognize, state: state, data: D, save: save, renderShipQuote: renderShipQuote
+    recognize: recognize, state: state, data: D, save: save, renderShipQuote: renderShipQuote,
+// 已保存报价单 / 服务器接口（调试与自测用）
+view: VIEW, api: api, openById: openById, saveQuote: saveQuote, renderBanner: renderBanner, costSnapshot: costSnapshot,
+switchPage: page, sync: sync
   };
 })();

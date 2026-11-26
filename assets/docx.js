@@ -188,6 +188,13 @@ window.PC_DOCX = (function () {
           (cell.shade ? '<w:shd w:val="clear" w:color="auto" w:fill="' + cell.shade + '"/>' : '') +
           '<w:vAlign w:val="' + (cell.valign || 'center') + '"/>' +
           '</w:tcPr>';
+        /* 单元格里的图片（cell.img = { rid: 关系 id, cx, cy: 尺寸 EMU }；cell.img 为 null = 空着占位） */
+        if ('img' in cell) {
+          x += '<w:p><w:pPr><w:spacing w:before="40" w:after="40" w:line="240" w:lineRule="auto"/>' +
+            '<w:jc w:val="center"/></w:pPr>' + drawing(cell.img) + '</w:p>';
+          x += '</w:tc>';
+          return;
+        }
         var lines = cell.lines || [cell.text || ''];
         lines.forEach(function (ln, li) {
           if (typeof ln === 'string') {
@@ -274,8 +281,29 @@ window.PC_DOCX = (function () {
     '<Application>Microsoft Office Word</Application><DocSecurity>0</DocSecurity>' +
     '</Properties>';
 
-  /* 生成本体：bodyXml 为 <w:p>/<w:tbl> 序列 */
-  function build(bodyXml, title) {
+  var picId = 100;
+  /* 段落里的内嵌图片（一行一个 <w:r>；img 为 null 时什么都不画） */
+  function drawing(img) {
+    if (!img) return '';
+    var A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+    var P = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
+    var id = picId++;
+    return '<w:r><w:drawing>' +
+      '<wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="' + img.cx + '" cy="' + img.cy + '"/>' +
+      '<wp:docPr id="' + id + '" name="图片 ' + id + '"/>' +
+      '<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="' + A + '" noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
+      '<a:graphic xmlns:a="' + A + '"><a:graphicData uri="' + P + '">' +
+      '<pic:pic xmlns:pic="' + P + '">' +
+      '<pic:nvPicPr><pic:cNvPr id="' + id + '" name="image' + id + '.jpeg"/><pic:cNvPicPr/></pic:nvPicPr>' +
+      '<pic:blipFill><a:blip r:embed="' + img.rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+      '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + img.cx + '" cy="' + img.cy + '"/></a:xfrm>' +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+  }
+
+  /* 生成本体：bodyXml 为 <w:p>/<w:tbl> 序列；images = [{ name, data }] 要嵌进文档的 JPEG 图片 */
+  function build(bodyXml, title, images) {
     var sectPr = '<w:sectPr>' +
       '<w:pgSz w:w="11906" w:h="16838"/>' +
       '<w:pgMar w:top="1247" w:right="1134" w:bottom="1247" w:left="1134" ' +
@@ -290,15 +318,27 @@ window.PC_DOCX = (function () {
       '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>' +
       sectPr + '</w:body></w:document>';
 
-    return zip([
-      { name: '[Content_Types].xml', data: u8(CONTENT_TYPES) },
+    // 有图片时：声明 jpeg 类型 + 在关系文件里登记每一张图
+    var hasImg = images && images.length > 0;
+    var types = hasImg ? CONTENT_TYPES.replace('<Default Extension="rels"',
+      '<Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="rels"') : CONTENT_TYPES;
+    var rels = hasImg ? DOC_RELS.replace('</Relationships>',
+      images.map(function (im, i) {
+        return '<Relationship Id="rIdImg' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/' + im.name + '"/>';
+      }).join('') + '</Relationships>') : DOC_RELS;
+
+    var files = [
+      { name: '[Content_Types].xml', data: u8(types) },
       { name: '_rels/.rels', data: u8(RELS) },
       { name: 'word/document.xml', data: u8(doc) },
-      { name: 'word/_rels/document.xml.rels', data: u8(DOC_RELS) },
+      { name: 'word/_rels/document.xml.rels', data: u8(rels) },
       { name: 'word/styles.xml', data: u8(STYLES) },
       { name: 'docProps/core.xml', data: u8(coreXml(title || '文档')) },
       { name: 'docProps/app.xml', data: u8(APP) }
-    ]);
+    ];
+    if (hasImg) images.forEach(function (im) { files.push({ name: 'word/media/' + im.name, data: im.data }); });
+
+    return zip(files);
   }
 
   return { build: build, p: p, run: run, tbl: tbl, esc: esc, SONG: SONG, HEI: HEI };

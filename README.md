@@ -215,7 +215,14 @@ python -m http.server 6655
 ```bash
 docker compose up -d --build
 # 访问 http://localhost:6655
+# 已保存的报价单在 ./data/，记得备份
 ```
+
+### 用法上的变化（1.4 起）
+
+- 容器里多了一个零依赖的 Node 服务（`server/server.js`）：除了托管页面，还负责报价单的保存 / 搜索 / 删除。不再需要 nginx。
+- 报价单保存在挂载的 `data/` 目录，重启、升级都不会丢。`deploy/backup.sh --install` 可以装一个每天 03:30 的备份任务（保留 30 天）。
+- 直接双击 `index.html` 也能用，但没有保存和搜索。
 
 ### 自动部署到服务器
 
@@ -258,7 +265,9 @@ cup-quote/
 │   └── style.css           # 样式
 ├── docs/images/            # 界面截图
 ├── deploy/
-│   └── nginx.conf          # nginx 配置
+│   └── backup.sh           # 已保存报价单的每日备份（保留 30 天）
+├── server/
+│   └── server.js           # 零依赖 Node 服务：托管页面 + 报价单保存 / 搜索接口
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .github/workflows/
@@ -286,6 +295,7 @@ cup-quote/
 - 茶叶杯的箱规需按「尺寸 × 包装」24 个组合逐个填
 - 文字识别是规则引擎，非常规表达可能识别不全（会提示手动补充）
 - 数据存 localStorage，换浏览器 / 清缓存会丢失，建议定期「导出备份」
+- 已保存的报价单存在服务器上，**保存和搜索没有密码**：知道网址的人都能看到，对外分享网址前请留意
 
 ---
 

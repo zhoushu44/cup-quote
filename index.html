@@ -21,6 +21,10 @@
     <button data-page="ship">快递</button>
     <button data-page="kb">知识</button>
   </nav>
+  <div class="qsearch" id="qSearch">
+    <input id="qSearchInput" placeholder="搜索单号 / 客户名称" autocomplete="off" spellcheck="false" title="输入报价单号或客户名称的一部分，选中后页面恢复成那张单当时的内容">
+    <div class="qsearch-drop" id="qSearchDrop"></div>
+  </div>
   <div class="bar-right">
     <span class="dim" id="appVer" title="当前运行的版本" style="display:none"></span>
     <span class="saved" id="saveState">已保存</span>
@@ -154,9 +158,16 @@
       <section class="box" id="panelOcr">
         <div class="box-head"><h2>文字识别</h2><span class="dim">粘贴客户需求</span></div>
         <div class="box-body">
-          <textarea id="ocrText" class="ta" placeholder="例：10万只 9盎司广告杯，268克，双层，内层268外层248，烫金加压纹，牛皮纸外层"></textarea>
+          <div class="ocr-row">
+            <div class="qimg" id="quoteImgBox" style="display:none" title="版面图：会显示在报价单和合同里">
+              <img id="quoteImgView" alt="版面图">
+              <button class="qimg-x" id="btnQuoteImgDel" title="移除版面图">×</button>
+            </div>
+            <textarea id="ocrText" class="ta" placeholder="例：10万只 9盎司广告杯，268克，双层，内层268外层248，烫金加压纹，牛皮纸外层"></textarea>
+          </div>
           <div class="btn-row">
             <button class="btn" id="btnOcr">识别</button>
+            <label class="link lbl-up" id="btnQuoteImg" title="上传杯子的版面图（JPG / PNG），也可以直接按 Ctrl+V 粘贴截图">＋ 版面图<input type="file" id="fileQuoteImg" accept="image/*" hidden></label>
             <button class="link" id="btnExample">示例</button>
             <button class="link" id="btnClearOcr">清空</button>
             <span class="dim">识别后直接套用到下方「工艺 · 配置调整」，可随时改</span>
@@ -169,6 +180,7 @@
         <div class="box-head">
           <h2>报价单</h2>
           <div class="btns">
+            <button class="btn" id="btnSaveQuote" title="保存后，可以在顶部搜索栏按单号或客户名称搜回这张单">保存</button>
             <select id="quoteTierSel" class="mini-sel" title="选择对外报价的档位">
               <option value="0">按底价</option>
               <option value="1">按标准价</option>
@@ -183,6 +195,7 @@
           </div>
         </div>
         <div class="box-body">
+          <div class="saved-banner" id="savedBanner" style="display:none"></div>
           <div class="cust-bar" id="custBar" title="点这里填 / 改客户信息">
             <span class="cust-sum dim" id="custSummary">未填写客户信息（点右侧「客户」填写）</span>
             <span class="cust-go">客户信息 ›</span>

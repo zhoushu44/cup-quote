@@ -1,47 +1,44 @@
 # ============================================================
 # 纸杯报价系统 · 生产镜像
-# 基础镜像：nginx alpine（体积 ~50MB）
-# 监听：0.0.0.0:80
+# 一个 Node 进程同时负责：提供网页 + 已保存报价单的存取接口
+# 监听：0.0.0.0:3000（以非 root 用户运行，所以不用 80）
+# 数据：/data（已保存的报价单，必须挂到宿主机，否则容器重建就丢）
 # ============================================================
-FROM nginx:1.27-alpine
+FROM node:22-alpine
 
 LABEL org.opencontainers.image.title="Paper Cup Quotation System" \
       org.opencontainers.image.description="纸杯报价系统 - 成本核算 / 报价单 / 合同导出" \
-      org.opencontainers.image.version="1.2" \
+      org.opencontainers.image.version="1.3" \
       org.opencontainers.image.licenses="MIT"
 
-# 时区（日志时间与国内一致）
-RUN apk add --no-cache tzdata \
- && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
- && echo "Asia/Shanghai" > /etc/timezone \
- && apk del tzdata
+ENV NODE_ENV=production \
+    DATA=/data \
+    PORT=3000
 
-# 站点文件
-COPY index.html /usr/share/nginx/html/index.html
-COPY assets/    /usr/share/nginx/html/assets/
+WORKDIR /app
 
-# 资源版本号：index.html 里引用脚本/样式的地址是 assets/xxx?v=__V__，
-# 构建时把 __V__ 换成提交号（--build-arg ASSET_V=xxx）。地址一变，浏览器必定下载新文件，
-# 不会再出现「服务器已更新、浏览器还在用旧脚本」
+# 网页文件
+COPY index.html public/index.html
+COPY assets/    public/assets/
+
+# 服务端
+COPY server/ server/
+
+# 版本号：①资源地址 assets/xxx?v=__V__ 构建时换成提交号（--build-arg ASSET_V=xxx），
+#         地址一变浏览器必定下载新文件；②/version.txt 可查看
+ARG APP_VERSION=1.3
 ARG ASSET_V=dev
-RUN sed -i "s/__V__/${ASSET_V}/g" /usr/share/nginx/html/index.html
+RUN sed -i "s/__V__/${ASSET_V}/g" public/index.html \
+ && echo "app=${APP_VERSION} commit=${ASSET_V}" > public/version.txt \
+ && chown -R node:node /app
 
-# nginx 配置（含 listen 0.0.0.0:80、gzip、缓存、安全头）
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+# 数据目录归运行用户所有（镜像里先建好，宿主机挂载时再 chown）
+RUN mkdir -p /data && chown node:node /data
+USER node
 
-# 版本标记，可通过 /version.txt 查看
-ARG APP_VERSION=1.2
-RUN echo "${APP_VERSION}" > /usr/share/nginx/html/version.txt
-
-# 确保 nginx 以非 root 用户可写临时目录（alpine 镜像默认已处理，这里显式声明）
-RUN chown -R nginx:nginx /usr/share/nginx/html \
- && chmod -R 755 /usr/share/nginx/html
-
-EXPOSE 80
+EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/healthz >/dev/null 2>&1 || exit 1
 
-STOPSIGNAL SIGQUIT
-
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server/server.js"]

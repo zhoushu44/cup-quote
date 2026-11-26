@@ -1,33 +1,37 @@
 # ============================================================
 # 纸杯报价系统 · 容器编排
 # 用法：
-#   docker compose up -d
+#   mkdir -p data && chown -R 1000:1000 data     # 数据目录（已保存的报价单）
+#   docker compose up -d --build
 # 访问：http://<服务器IP>:6655
 # ============================================================
 services:
   web:
-    image: ${DOCKER_HUB_USERNAME:-local}/paper-cup-quote:${APP_VERSION:-1.2}
+    image: ${DOCKER_HUB_USERNAME:-local}/paper-cup-quote:${APP_VERSION:-1.3}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        APP_VERSION: ${APP_VERSION:-1.2}
+        APP_VERSION: ${APP_VERSION:-1.3}
+        ASSET_V: ${ASSET_V:-dev}
     container_name: paper-cup-quote
     restart: unless-stopped
 
-    # 宿主机 6655 → 容器 80
+    # 宿主机 6655 → 容器 3000
     ports:
-      - "0.0.0.0:6655:80"
+      - "0.0.0.0:6655:3000"
 
-    # 只读根文件系统（nginx 需要的目录挂成 tmpfs）
+    # 已保存的报价单存在宿主机 ./data，容器重建不丢
+    volumes:
+      - ./data:/data
+
+    # 只读根文件系统（Node 不需要写别的目录）
     read_only: true
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
       - /tmp
 
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
       timeout: 3s
       retries: 3
