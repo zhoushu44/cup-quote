@@ -5097,8 +5097,21 @@
   var ERP = { mask: null, prods: [], pk: [], order: null };
 
   /* 按盎司数+结构挑 ERP 产品：单层 → “9盎司”；双层/中空 → 含“中空”的同盎司名 */
-  function erpPickProduct(oz, structName) {
-    var hollow = /双|中空/.test(structName || '');
+  function erpPickProduct(oz, structName, specName) {
+    var sn = structName || '';
+    var eu = /欧\s*8/.test(specName || '');
+    /* ERP 里「外贴」是独立产品（9.5外贴、欧8外贴），优先匹配 */
+    if (/外贴/.test(sn)) {
+      var wai = ERP.prods.filter(function (p) { return p.name === (eu ? '欧8外贴' : oz + '外贴'); })[0];
+      if (wai) return wai;
+    }
+    var hollow = /双|中空/.test(sn);
+    /* 「欧8」在 ERP 是独立产品（欧8单层/欧8中空），不要落到「8盎司」上 */
+    if (eu) {
+      var euHit = ERP.prods.filter(function (p) { return p.name === (hollow ? '欧8中空' : '欧8单层'); })[0] ||
+        ERP.prods.filter(function (p) { return p.name.indexOf(hollow ? '欧8中空' : '欧8单层') === 0; })[0];
+      if (euHit) return euHit;
+    }
     var want = hollow ? (oz + '中空') : (oz + '盎司');
     var hit = ERP.prods.filter(function (p) { return p.name === want; })[0];
     if (!hit && hollow) hit = ERP.prods.filter(function (p) { return p.name.indexOf(oz + '中空') === 0; })[0];
@@ -5169,7 +5182,7 @@
   function erpFormUI() {
     var q = state._q || buildQuote();
     var oz = num(q.spec && q.spec.oz) || 0;
-    var prod = erpPickProduct(oz, q.struct);
+    var prod = erpPickProduct(oz, q.struct, q.spec && q.spec.name);
     var freightCharged = (state.freightPay !== 'collect') ? num(q.freight) : 0;
     var d0 = new Date(Date.now() + (num(q.leadDays) || 7) * 86400000);
     var defDate = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0') + '-' + String(d0.getDate()).padStart(2, '0');
@@ -5244,7 +5257,9 @@
         planVoList: [{ packageType: 0, packageId: num(selK.value), count: count, num: per }]
       };
       /* 纸种关键词与工艺名，给服务端去 ERP 字典里匹配 */
-      var paperKw = String(q.paper || '').trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
+      var paperTxt = String(q.paper || '');
+      var paperKw = /铝箔/.test(paperTxt) ? '铝箔' : /银箔|金箔/.test(paperTxt) ? '金箔' :
+        paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
       api('POST', '/api/erp', {
         customer: { name: cust, contact: $('#erpContact').value.trim() },
         order: order,
