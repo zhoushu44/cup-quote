@@ -4920,7 +4920,16 @@
 
   function refreshSeq() {
     return api('GET', '/api/seq?date=' + ymd8()).then(function (r) {
-      if (r.ok) SEQ = { date: today(), next: num(r.next) || 100 };
+      if (!r.ok) return r;
+      SEQ = { date: today(), next: num(r.next) || 100 };
+      // 页面刚打开时流水号还没回来，当时的单号是随机的：还没保存过就换成流水号
+      if (state._noRand && state._noDate === today() && !(VIEW.rec && !VIEW.dirty) && !VIEW.applying) {
+        state._noRand = false;
+        state._no = '';
+        ensureNo();
+        if ($('#page-quote').classList.contains('on')) renderDoc();
+        save();
+      }
       return r;
     });
   }
@@ -4930,8 +4939,8 @@
     if (VIEW.rec && !VIEW.dirty) { state._no = VIEW.rec.no; state._noDate = today(); return; }
     if (state._no && state._noDate === today()) return;
     state._noDate = today();
-    var n = (SEQ.date === today() && SEQ.next > 0) ? String(SEQ.next++) : String(Math.floor(Math.random() * 900 + 100));
-    state._no = 'PC' + ymd8() + '-' + n;
+    if (SEQ.date === today() && SEQ.next > 0) { state._noRand = false; state._no = 'PC' + ymd8() + '-' + (SEQ.next++); }
+    else { state._noRand = true; state._no = 'PC' + ymd8() + '-' + Math.floor(Math.random() * 900 + 100); }
   }
 
   /* ==================== 已保存报价单 ==================== */
