@@ -162,17 +162,21 @@ window.PC_DATA = (function () {
     { id: 'pe', name: 'PE淋膜（纸价已含）', sides: 0, desc: '买的是淋膜纸，PE 涂膜含在纸价里' }
   ];
 
-  /* 工艺：价格 = 元/只（叠加），plate = 一次性版费 */
+  /* 工艺：价格 = 元/只（叠加），plate = 一次性版费。
+     工艺名与印刷 ERP 的工序名保持一致（烫金/压纹/局部UV/哑膜/光膜/击凸…），
+     下单 ERP 时按名字直接对上工序行；烫银走 ERP 烫金工序、镭射膜走光膜，
+     丝网/数码印刷是印刷方式，写进版面说明 */
   var crafts = [
     { id: 'gold', name: '烫金', prices: [0.02, 0.018, 0.015], plate: 300, plateUnit: '元/色', desc: '金属光泽，需烫金版' },
-    { id: 'silver', name: '烫银', prices: [0.02, 0.018, 0.015], plate: 300, plateUnit: '元/色', desc: '银色金属光泽' },
-    { id: 'emboss', name: '压纹（液压）', prices: [0.015, 0.013, 0.011], plate: 200, plateUnit: '元/版', desc: '凹凸纹理，需压纹版' },
-    { id: 'uv', name: 'UV 上光', prices: [0.012, 0.01, 0.008], plate: 150, plateUnit: '元/版', desc: '局部亮光，突出重点' },
-    { id: 'lam', name: '覆膜（亮/哑）', prices: [0.01, 0.008, 0.007], plate: 0, plateUnit: '', desc: '整面覆膜，耐磨防水' },
+    { id: 'silver', name: '烫银', prices: [0.02, 0.018, 0.015], plate: 300, plateUnit: '元/色', desc: '银色金属光泽（ERP 记烫金工序）' },
+    { id: 'emboss', name: '压纹', prices: [0.015, 0.013, 0.011], plate: 200, plateUnit: '元/版', desc: '凹凸纹理，需压纹版' },
+    { id: 'uv', name: '局部UV', prices: [0.012, 0.01, 0.008], plate: 150, plateUnit: '元/版', desc: '局部亮光，突出重点' },
+    { id: 'lamDull', name: '哑膜', prices: [0.01, 0.008, 0.007], plate: 0, plateUnit: '', desc: '整面覆哑膜，耐磨防水' },
+    { id: 'lamGloss', name: '光膜', prices: [0.01, 0.008, 0.007], plate: 0, plateUnit: '', desc: '整面覆亮膜，色泽鲜艳' },
     { id: 'relief', name: '击凸', prices: [0.02, 0.018, 0.015], plate: 300, plateUnit: '元/版', desc: '立体凸起，常配烫金' },
-    { id: 'laser', name: '镭射膜', prices: [0.05, 0.045, 0.04], plate: 0, plateUnit: '', desc: '彩虹反光效果' },
-    { id: 'silk', name: '丝网印刷', prices: [0.03, 0.028, 0.025], plate: 80, plateUnit: '元/色', desc: '墨层厚、遮盖力强' },
-    { id: 'digital', name: '数码印刷', prices: [0.06, 0.05, 0.04], plate: 0, plateUnit: '', desc: '免版费，小批量友好' }
+    { id: 'laser', name: '镭射膜', prices: [0.05, 0.045, 0.04], plate: 0, plateUnit: '', desc: '彩虹反光效果（ERP 记光膜工序）' },
+    { id: 'silk', name: '丝网印刷', prices: [0.03, 0.028, 0.025], plate: 80, plateUnit: '元/色', desc: '墨层厚、遮盖力强，写进版面说明' },
+    { id: 'digital', name: '数码印刷', prices: [0.06, 0.05, 0.04], plate: 0, plateUnit: '', desc: '免版费，小批量友好，写进版面说明' }
   ];
 
   /* 三档报价：按利润率（毛利率口径） */

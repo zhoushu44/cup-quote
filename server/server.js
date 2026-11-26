@@ -310,17 +310,15 @@ async function serveApi(req, res, url) {
               stockFlag: 0, outFlag: 0, outNum: 0, lineNum: 50 });
           };
           tpl.forEach(function (r) { if (r.defaultFlag === 1 && !skip[r.processName]) push(r); });
-          /* 报价系统工艺名 → ERP 工序名：先精确，再同义词（双向子串），
-             丝网/数码印刷这类「印刷方式」没有对应工序行，已写在版面说明里 */
-          const craftMap = { '烫银': '烫金', '覆膜（亮/哑）': '哑膜', '镭射膜': '光膜' };
+          /* 工艺名已在 data.js 里与 ERP 工序名统一；这里只处理 ERP 没有的变体：
+             烫银→ERP烫金工序、镭射膜→光膜；丝网/数码印刷是印刷方式，只进版面说明 */
+          const craftMap = { '烫银': '烫金', '镭射膜': '光膜' };
           (body3.crafts || []).forEach(function (c) {
-            let cn = String(c || '').trim();
+            const cn = craftMap[String(c || '').trim()] || String(c || '').trim();
             if (!cn) return;
-            if (craftMap[cn]) cn = craftMap[cn];
-            else if (cn.indexOf('覆膜') >= 0) cn = cn.indexOf('哑') >= 0 ? '哑膜' : '光膜';
             const free = tpl.filter(function (r) { return !skip[r.processName] && !rows.some(function (x) { return x.processId === r.processId; }); });
-            /* 优先：工艺名打头（压纹（液压）→压纹），其次任意包含，最后精确反查 */
-            const hit = free.filter(function (r) { return cn.indexOf(r.processName) === 0; })[0] ||
+            /* 优先：工艺名打头（压纹（液压）→压纹），其次任意包含 */
+            const hit = free.filter(function (r) { return cn === r.processName || cn.indexOf(r.processName) === 0; })[0] ||
               free.filter(function (r) { return r.processName.indexOf(cn) >= 0 || cn.indexOf(r.processName) >= 0; })[0];
             push(hit);
           });
