@@ -290,6 +290,49 @@ async function serveApi(req, res, url) {
         if (!order.productId) throw new Error('没有选产品');
         if (!order.orderQty) throw new Error('没有数量');
         if (!order.productMoney) throw new Error('没有金额');
+        /* 正式下单（operate=1 是暂存，车间列表里看不到） */
+        order.operate = 2;
+        /* 工艺行：ERP 里别人下的单都带工序清单（印刷/模切/清废/上架/成型…），
+           这行是 UI 前端拼的、不发就为空，这里按产品模板补齐 */
+        if (!order.processList || !order.processList.length) {
+          const tpl = await erp.processTemplate(DATA, order.productId);
+          const skip = { '正印': 1, '反印': 1, '印刷要求': 1 };
+          const rows = [];
+          const push = function (r) {
+            if (!r || rows.some(function (x) { return x.processId === r.processId; })) return;
+            rows.push({ processName: r.processName, processId: r.processId, processValue: '',
+              totalNum: order.orderQty, processType: 2, busiType: 0, processInfo: r.processName,
+              stockFlag: 0, outFlag: 0, outNum: 0, lineNum: 50 });
+          };
+          tpl.forEach(function (r) { if (r.defaultFlag === 1 && !skip[r.processName]) push(r); });
+          (body3.crafts || []).forEach(function (c) { push(tpl.filter(function (r) { return r.processName === c; })[0]); });
+          order.processList = rows;
+        }
+        /* 纸种：按报价的克重（+纸名关键词）在 ERP 产品纸种库里匹配 */
+        if (!order.suttleId) {
+          const ps = (await erp.productPapers(DATA, order.productId)).filter(function (p) { return p && p.name && p.suttleId; });
+          const gsm = Number(body3.paperGsm) || 0;
+          const kw = String(body3.paperKw || '');
+          const has = (n, s) => String(n || '').indexOf(s) >= 0;
+          const pick =
+            ps.filter(function (p) { return kw && has(p.name, kw) && has(p.name, gsm + 'g'); })[0] ||
+            ps.filter(function (p) { return kw && has(p.name, kw) && has(p.paper, kw); })[0] ||
+            ps.filter(function (p) { return has(p.name, gsm + 'g'); })[0] ||
+            ps.filter(function (p) { return p.def === 1; })[0] || ps[0];
+          if (pick) { order.paperSuttle = pick.name; order.suttleId = pick.suttleId; order.paper = pick.paper || String(pick.name).replace(/\d+g$/, ''); }
+        }
+        /* 装箱名 + 默认物流/模房 */
+        if (order.planVoList && order.planVoList.length) {
+          const pk = await erp.packages(DATA, order.productId);
+          order.planVoList.forEach(function (p) {
+            if (!p.packageName) {
+              const hit = pk.filter(function (x) { return x.goodId === p.packageId; })[0];
+              if (hit) p.packageName = hit.name;
+            }
+          });
+        }
+        if (!order.logistics) order.logistics = body3.logistics || '创新物流';
+        if (!order.mouldFactory) order.mouldFactory = '车间';
         /* 版面图：先传到 ERP 的设计稿库，再把地址挂到订单上 */
         if (body3.design && body3.design.b64) {
           const up = await erp.uploadDesign(DATA, body3.design.name || 'layout.jpg', body3.design.b64);

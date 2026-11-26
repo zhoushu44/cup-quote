@@ -5186,6 +5186,7 @@
       '<label>客户名称<input id="erpCust" value="' + esc(q.customer || '') + '" placeholder="ERP 里没有同名客户时会自动新建"></label>' +
       '<label>联系人<input id="erpContact" value="' + esc(q.contact || '') + '"></label>' +
       '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
+      '<label>物流公司<input id="erpLogi" value="创新物流"></label>' +
       '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
       '<label>备注<input id="erpRemark" value="' + esc(remark) + '"></label>' +
       (state.quoteImg && state.quoteImg.src ? '<label class="erp-imgrow"><input type="checkbox" id="erpSendImg" checked style="width:auto;display:inline-block;margin:0 6px 0 0">版面图随单传到 ERP（' + esc(state.quoteImg.w || '?') + '×' + esc(state.quoteImg.h || '?') + '）</label>' : '') +
@@ -5225,12 +5226,18 @@
         orderQty: q.qty, unitPrice: q.price, productMoney: q.amount, orderMoney: q.total,
         sendFee: 0, trueSendFee: freightCharged, deliverTime: $('#erpDate').value,
         remark: $('#erpRemark').value.trim(), paperRemark: '', mainOrderInfo: $('#erpLayout').value.trim(),
-        operate: 1, orderStatus: 0, origin: '线下渠道',
+        operate: 2, orderStatus: 0, origin: '线下渠道', autoLayoutFlag: 0,
         planVoList: [{ packageType: 0, packageId: num(selK.value), count: count, num: per }]
       };
+      /* 纸种关键词与工艺名，给服务端去 ERP 字典里匹配 */
+      var paperKw = String(q.paper || '').trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
       api('POST', '/api/erp', {
         customer: { name: cust, contact: $('#erpContact').value.trim() },
         order: order,
+        crafts: q.crafts || [],
+        paperGsm: num(q.cupGram) || 0,
+        paperKw: paperKw.replace(/g$/i, ''),
+        logistics: $('#erpLogi').value.trim(),
         design: ($('#erpSendImg') && $('#erpSendImg').checked && state.quoteImg && state.quoteImg.src) ? {
           name: (q.no ? q.no : 'layout') + '-版面图.jpg',
           b64: state.quoteImg.src,

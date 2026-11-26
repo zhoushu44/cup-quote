@@ -189,8 +189,24 @@ async function uploadDesign(DATA, name, b64) {
   return { url: j.url, originalFilename: j.originalFilename || name, fileName: Buffer.from(String(name || 'layout.jpg'), 'utf8').toString('base64') };
 }
 
+/* ---------- 工序模板 / 纸种库 ---------- */
+/* 产品的默认工序模板（defaultFlag=1 的项就是 UI 新建订单时预选中的工艺行） */
+async function processTemplate(DATA, productId) {
+  const j = await api(DATA, '/base/process/getProcessList?productId=' + productId);
+  return j.data || [];
+}
+
+/* 产品可选纸种：[{suttleId, name 如「白卡268g」, paper 如「白卡纸」}，defaultFlag=1 是默认] */
+async function productPapers(DATA, productId) {
+  const j = await api(DATA, '/base/productpaper/list?productId=' + productId + '&pageSize=200');
+  return (j.rows || []).map(function (r) {
+    return { suttleId: r.suttleId, name: r.suttleName || r.name, paper: r.paperName || '', def: r.defaultFlag };
+  });
+}
+
 module.exports = {
   status: status, maskCfg: maskCfg, writeCfg: writeCfg,
   login: login, findCustomers: findCustomers, ensureCustomer: ensureCustomer,
-  products: products, packages: packages, createOrder: createOrder, uploadDesign: uploadDesign
+  products: products, packages: packages, createOrder: createOrder, uploadDesign: uploadDesign,
+  processTemplate: processTemplate, productPapers: productPapers
 };
