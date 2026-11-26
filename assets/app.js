@@ -5225,14 +5225,12 @@
       '<label>ERP 产品<select id="erpProd"></select></label>' +
       '<label>纸种<select id="erpPaper"></select></label>' +
       '<label>装箱<select id="erpPk"></select></label>' +
-      '<label>客户名称<input id="erpCust" list="erpCustList" value="' + esc(q.customer || '') + '" placeholder="输入会搜 ERP 客户，选中的直接用，没有的自动新建"><datalist id="erpCustList"></datalist></label>' +
-      '<label>联系人<input id="erpContact" value="' + esc(q.contact || '') + '"></label>' +
+      '<label>客户（报价单自动带过去，ERP 没有同名会自动建档）<span class="dim">' + esc(q.customer || '') + '　' + esc(q.contact || '') + '</span></label>' +
       '<label>业务员（选 ERP 系统用户，存进客户档案）<select id="erpSale"><option value="">（不填）</option></select></label>' +
       '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
       '<label>物流公司<input id="erpLogi" value="创新物流"></label>' +
       '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
       '<label>备注<input id="erpRemark" value="' + esc(remark) + '"></label>' +
-      (state.quoteImg && state.quoteImg.src ? '<label class="erp-imgrow"><input type="checkbox" id="erpSendImg" checked style="width:auto;display:inline-block;margin:0 6px 0 0">版面图随单传到 ERP（' + esc(state.quoteImg.w || '?') + '×' + esc(state.quoteImg.h || '?') + '）</label>' : '') +
       '<div class="erp-foot"><button class="btn" data-erp-close>取消</button><button class="btn primary" id="erpGo">确认下单</button></div>');
 
     var selP = $('#erpProd'), selK = $('#erpPk'), selPa = $('#erpPaper');
@@ -5265,31 +5263,7 @@
     loadPaper();
     selP.onchange = function () { selK.innerHTML = '<option>加载中…</option>'; selPa.innerHTML = '<option>加载中…</option>'; loadPk(); loadPaper(); };
 
-    /* 客户名称输入 → 搜 ERP 往来单位，下拉直接选（选中就用该客户，不再新建） */
-    var custRows = [], custTimer = null, custSelId = 0;
-    var custInp = $('#erpCust');
-    custInp.addEventListener('input', function () {
-      custSelId = 0;
-      var v = custInp.value.trim();
-      clearTimeout(custTimer);
-      if (!v) return;
-      custTimer = setTimeout(function () {
-        api('GET', '/api/erp?w=customers&q=' + encodeURIComponent(v)).then(function (r) {
-          custRows = (r.ok && r.list) || [];
-          $('#erpCustList').innerHTML = custRows.map(function (c) {
-            return '<option value="' + esc(c.name) + '">' + esc(c.name + (c.linkman ? '　' + c.linkman : '') + (c.mobile ? '　' + c.mobile : '')) + '</option>';
-          }).join('');
-        });
-      }, 300);
-    });
-    custInp.addEventListener('change', function () {
-      var v = custInp.value.trim();
-      var hit = custRows.filter(function (c) { return c.name === v; })[0];
-      if (!hit) { custSelId = 0; return; }
-      custSelId = hit.id;
-      if (!$('#erpContact').value.trim() && hit.linkman) $('#erpContact').value = hit.linkman;
-      if (!$('#erpSale').value.trim() && hit.saleMan) { var so = $('#erpSale'); for (var i = 0; i < so.options.length; i++) if (so.options[i].text === hit.saleMan) so.selectedIndex = i; }
-    });
+    /* 客户名称/联系人直接取报价单，ERP 确认框不再输入 */
 
     /* 业务员下拉：ERP 系统用户名单 */
     api('GET', '/api/erp?w=saleman').then(function (r) {
@@ -5300,8 +5274,8 @@
     });
 
     $('#erpGo').onclick = function () {
-      var cust = $('#erpCust').value.trim();
-      if (!cust) { toast('客户名称要填'); return; }
+      var cust = String(q.customer || '').trim();
+      if (!cust) { toast('报价单还没填客户公司'); return; }
       var opt = selK.options[selK.selectedIndex];
       var per = opt ? num(opt.dataset.per) : 0;
       if (!per) { toast('装箱规格没取到'); return; }
@@ -5325,8 +5299,8 @@
         paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
       api('POST', '/api/erp', {
         customer: {
-          name: cust, contact: $('#erpContact').value.trim(),
-          receiveAddress: String(q.addr || '').trim(), saleMan: $('#erpSale').value.trim(), customId: custSelId || 0
+          name: cust, contact: String(q.contact || '').trim(),
+          receiveAddress: String(q.addr || '').trim(), saleMan: $('#erpSale').value.trim()
         },
         order: order,
         crafts: q.crafts || [],
@@ -5334,7 +5308,7 @@
         paperKw: paperKw.replace(/g$/i, ''),
         logistics: $('#erpLogi').value.trim(),
         paper: (selPa.value ? { suttleId: num(selPa.value), name: selPa.options[selPa.selectedIndex].getAttribute('data-name'), paperName: selPa.options[selPa.selectedIndex].getAttribute('data-paper') } : null),
-        design: ($('#erpSendImg') && $('#erpSendImg').checked && state.quoteImg && state.quoteImg.src) ? {
+        design: (state.quoteImg && state.quoteImg.src) ? {
           name: (q.no ? q.no : 'layout') + '-版面图.jpg',
           b64: state.quoteImg.src,
           w: state.quoteImg.w || 0, h: state.quoteImg.h || 0
