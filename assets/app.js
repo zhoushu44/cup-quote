@@ -5188,6 +5188,7 @@
       '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
       '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
       '<label>备注<input id="erpRemark" value="' + esc(remark) + '"></label>' +
+      (state.quoteImg && state.quoteImg.src ? '<label class="erp-imgrow"><input type="checkbox" id="erpSendImg" checked style="width:auto;display:inline-block;margin:0 6px 0 0">版面图随单传到 ERP（' + esc(state.quoteImg.w || '?') + '×' + esc(state.quoteImg.h || '?') + '）</label>' : '') +
       '<div class="erp-foot"><button class="btn" data-erp-close>取消</button><button class="btn primary" id="erpGo">确认下单</button></div>');
 
     var selP = $('#erpProd'), selK = $('#erpPk');
@@ -5227,7 +5228,15 @@
         operate: 1, orderStatus: 0, origin: '线下渠道',
         planVoList: [{ packageType: 0, packageId: num(selK.value), count: count, num: per }]
       };
-      api('POST', '/api/erp', { customer: { name: cust, contact: $('#erpContact').value.trim() }, order: order }).then(function (r) {
+      api('POST', '/api/erp', {
+        customer: { name: cust, contact: $('#erpContact').value.trim() },
+        order: order,
+        design: ($('#erpSendImg') && $('#erpSendImg').checked && state.quoteImg && state.quoteImg.src) ? {
+          name: (q.no ? q.no : 'layout') + '-版面图.jpg',
+          b64: state.quoteImg.src,
+          w: state.quoteImg.w || 0, h: state.quoteImg.h || 0
+        } : null
+      }).then(function (r) {
         if (!r.ok) { toast(r.error || '下单失败'); btn.disabled = false; btn.textContent = '确认下单'; return; }
         toast('已下生产单 ' + r.code);
         erpClose();

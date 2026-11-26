@@ -281,7 +281,7 @@ async function serveApi(req, res, url) {
       const c = erp.writeCfg(DATA, { url: body3.config.url, user: body3.config.user, pass: body3.config.pass || null });
       return json(res, 200, { ok: true, config: { url: c.url, user: c.user, configured: !!(c.user && c.pass) } });
     }
-    /* 下单：body = { customer:{name,contact,mobile}|customId, order:{…ERP 字段…} } */
+    /* 下单：body = { customer:{name,contact,mobile}|customId, order:{…ERP 字段…}, design:{name,b64,w,h}? } */
     if (body3 && body3.order) {
       try {
         const cust = body3.customId ? { id: body3.customId, name: body3.order.customer } :
@@ -290,6 +290,15 @@ async function serveApi(req, res, url) {
         if (!order.productId) throw new Error('没有选产品');
         if (!order.orderQty) throw new Error('没有数量');
         if (!order.productMoney) throw new Error('没有金额');
+        /* 版面图：先传到 ERP 的设计稿库，再把地址挂到订单上 */
+        if (body3.design && body3.design.b64) {
+          const up = await erp.uploadDesign(DATA, body3.design.name || 'layout.jpg', body3.design.b64);
+          order.filePath = up.url;
+          order.thumb = up.url;
+          order.fileName = up.fileName;
+          if (Number(body3.design.w) > 0) order.width = Number(body3.design.w);
+          if (Number(body3.design.h) > 0) order.height = Number(body3.design.h);
+        }
         order.customId = cust.id;
         order.customer = cust.name;
         const made = await erp.createOrder(DATA, order);

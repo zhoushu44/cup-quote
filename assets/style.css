@@ -994,3 +994,5 @@ label.lbl-up:hover { color: var(--ac); }
 .erp-modal textarea { resize: vertical; }
 .erp-modal .erp-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .saved-banner .sb-erp { color: #1d7a4f; font-weight: 600; }
+
+.erp-modal label.erp-imgrow { color: var(--ink); background: #f2f7ef; border-radius: 6px; padding: 7px 9px; }

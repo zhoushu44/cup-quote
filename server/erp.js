@@ -162,8 +162,35 @@ async function createOrder(DATA, body) {
   return { id: id, code: code };
 }
 
+/* ---------- 设计稿（版面图）上传 ---------- */
+/* 单文件，multipart 字段名必须是 file；返回 {url, originalFilename} */
+async function uploadDesign(DATA, name, b64) {
+  const c = loadCfg(DATA);
+  if (!token) await login(DATA);
+  const buf = Buffer.from(String(b64).replace(/^data:[^,]+,/, ''), 'base64');
+  const boundary = '----qs' + Date.now().toString(36);
+  const head = Buffer.from(
+    '--' + boundary + '\r\n' +
+    'Content-Disposition: form-data; name="file"; filename="' + String(name || 'layout.jpg').replace(/"/g, '') + '"\r\n' +
+    'Content-Type: image/jpeg\r\n\r\n', 'utf8');
+  const tail = Buffer.from('\r\n--' + boundary + '--\r\n', 'utf8');
+  const body = Buffer.concat([head, buf, tail]);
+  const r = await fetch(c.url + '/prod-api/design/design/uploadFile', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/form-data; boundary=' + boundary },
+    body: body
+  });
+  if (r.status === 401 && !arguments[3]) {
+    token = null;
+    return uploadDesign(DATA, name, b64, true);
+  }
+  const j = await r.json().catch(function () { return {}; });
+  if (!j.url) throw new Error('版面图上传失败：' + JSON.stringify(j).slice(0, 200));
+  return { url: j.url, originalFilename: j.originalFilename || name, fileName: Buffer.from(String(name || 'layout.jpg'), 'utf8').toString('base64') };
+}
+
 module.exports = {
   status: status, maskCfg: maskCfg, writeCfg: writeCfg,
   login: login, findCustomers: findCustomers, ensureCustomer: ensureCustomer,
-  products: products, packages: packages, createOrder: createOrder
+  products: products, packages: packages, createOrder: createOrder, uploadDesign: uploadDesign
 };
