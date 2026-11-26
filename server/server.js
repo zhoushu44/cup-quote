@@ -289,8 +289,10 @@ async function serveApi(req, res, url) {
     /* 下单：body = { customer:{name,contact,mobile}|customId, order:{…ERP 字段…}, design:{name,b64,w,h}? } */
     if (body3 && body3.order) {
       try {
-        const cust = body3.customId ? { id: body3.customId, name: body3.order.customer } :
-          await erp.ensureCustomer(DATA, body3.customer || {});
+        const custIn = body3.customer || {};
+        const custId = Number(body3.customId) || Number(custIn.customId) || 0;
+        const cust = custId ? { id: custId, name: custIn.name || order.customer } :
+          await erp.ensureCustomer(DATA, custIn);
         const order = body3.order;
         if (!order.productId) throw new Error('没有选产品');
         if (!order.orderQty) throw new Error('没有数量');

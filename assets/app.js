@@ -5197,8 +5197,10 @@
       '<label>ERP 产品<select id="erpProd"></select></label>' +
       '<label>纸种<select id="erpPaper"></select></label>' +
       '<label>装箱<select id="erpPk"></select></label>' +
-      '<label>客户名称<input id="erpCust" value="' + esc(q.customer || '') + '" placeholder="ERP 里没有同名客户时会自动新建"></label>' +
+      '<label>客户名称<input id="erpCust" list="erpCustList" value="' + esc(q.customer || '') + '" placeholder="输入会搜 ERP 客户，选中的直接用，没有的自动新建"><datalist id="erpCustList"></datalist></label>' +
       '<label>联系人<input id="erpContact" value="' + esc(q.contact || '') + '"></label>' +
+      '<label>手机 / 收货地址（可选，随客户档案存进 ERP）<input id="erpMobile" placeholder="手机号"><input id="erpAddr" placeholder="收货地址"></label>' +
+      '<label>业务员（可选，进 ERP 客户档案）<input id="erpSale"></label>' +
       '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
       '<label>物流公司<input id="erpLogi" value="创新物流"></label>' +
       '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
@@ -5236,6 +5238,33 @@
     loadPaper();
     selP.onchange = function () { selK.innerHTML = '<option>加载中…</option>'; selPa.innerHTML = '<option>加载中…</option>'; loadPk(); loadPaper(); };
 
+    /* 客户名称输入 → 搜 ERP 往来单位，下拉直接选（选中就用该客户，不再新建） */
+    var custRows = [], custTimer = null, custSelId = 0;
+    var custInp = $('#erpCust');
+    custInp.addEventListener('input', function () {
+      custSelId = 0;
+      var v = custInp.value.trim();
+      clearTimeout(custTimer);
+      if (!v) return;
+      custTimer = setTimeout(function () {
+        api('GET', '/api/erp?w=customers&q=' + encodeURIComponent(v)).then(function (r) {
+          custRows = (r.ok && r.list) || [];
+          $('#erpCustList').innerHTML = custRows.map(function (c) {
+            return '<option value="' + esc(c.name) + '">' + esc(c.name + (c.linkman ? '　' + c.linkman : '') + (c.mobile ? '　' + c.mobile : '')) + '</option>';
+          }).join('');
+        });
+      }, 300);
+    });
+    custInp.addEventListener('change', function () {
+      var v = custInp.value.trim();
+      var hit = custRows.filter(function (c) { return c.name === v; })[0];
+      if (!hit) { custSelId = 0; return; }
+      custSelId = hit.id;
+      if (!$('#erpContact').value.trim() && hit.linkman) $('#erpContact').value = hit.linkman;
+      if (!$('#erpMobile').value.trim() && hit.mobile) $('#erpMobile').value = hit.mobile;
+      if (!$('#erpSale').value.trim() && hit.saleMan) $('#erpSale').value = hit.saleMan;
+    });
+
     $('#erpGo').onclick = function () {
       var cust = $('#erpCust').value.trim();
       if (!cust) { toast('客户名称要填'); return; }
@@ -5261,7 +5290,11 @@
       var paperKw = /铝箔/.test(paperTxt) ? '铝箔' : /银箔|金箔/.test(paperTxt) ? '金箔' :
         paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
       api('POST', '/api/erp', {
-        customer: { name: cust, contact: $('#erpContact').value.trim() },
+        customer: {
+          name: cust, contact: $('#erpContact').value.trim(),
+          mobile: $('#erpMobile').value.trim(), receiveAddress: $('#erpAddr').value.trim(),
+          saleMan: $('#erpSale').value.trim(), customId: custSelId || 0
+        },
         order: order,
         crafts: q.crafts || [],
         paperGsm: num(q.cupGram) || 0,

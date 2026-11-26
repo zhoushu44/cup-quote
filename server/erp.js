@@ -104,7 +104,9 @@ async function ensureCustomer(DATA, info) {
   const found = await findCustomers(DATA, name, 10);
   const exact = found.filter(function (x) { return x.name === name; });
   if (exact.length) return exact[0];
-  /* 没有完全同名的 → 新建一个（等级固定普通客户 4），建完再搜拿 id */
+  /* 没有完全同名的 → 新建一个（等级固定普通客户 4），建完再搜拿 id。
+     手机 / 收货地址 / 业务员有就一并带上（ERP 客户档案实测都支持） */
+  const recv = String((info && info.receiveAddress) || '').trim();
   await api(DATA, '/base/visitors', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json;charset=UTF-8' },
@@ -112,6 +114,10 @@ async function ensureCustomer(DATA, info) {
       visitorType: 0, name: name, customType: 3, level: 4, category: '1', status: '0',
       linkman: String((info && info.contact) || '').slice(0, 40) || null,
       mobile: String((info && info.mobile) || '').slice(0, 20) || null,
+      receiveAddress: recv.slice(0, 120) || null,
+      receiver: recv ? (String((info && info.contact) || '').slice(0, 40) || null) : null,
+      receiveMobile: recv ? (String((info && info.mobile) || '').slice(0, 20) || null) : null,
+      saleMan: String((info && info.saleMan) || '').slice(0, 40) || null,
       remark: '由报价系统自动创建'
     })
   });
