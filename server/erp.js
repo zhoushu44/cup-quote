@@ -94,7 +94,7 @@ async function findCustomers(DATA, name, limit) {
   const j = await api(DATA, '/base/visitors/listType?pageNum=1&pageSize=' + (limit || 10) +
     '&visitorType%5B0%5D=0&ywFlag=0&status=0&name=' + encodeURIComponent(name));
   return (j.rows || []).map(function (x) {
-    return { id: x.id, name: x.name, linkman: x.linkman || '', mobile: x.mobile || '', level: x.levelName || '', saleMan: x.saleMan || '' };
+    return { id: x.id, name: x.name, linkman: x.linkman || '', mobile: x.mobile || '', level: x.levelName || '', saleMan: x.saleMan || '', address: x.receiveAddress || '' };
   });
 }
 
