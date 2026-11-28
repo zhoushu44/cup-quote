@@ -996,3 +996,10 @@ label.lbl-up:hover { color: var(--ac); }
 .saved-banner .sb-erp { color: #1d7a4f; font-weight: 600; }
 
 .erp-modal label.erp-imgrow { color: var(--ink); background: #f2f7ef; border-radius: 6px; padding: 7px 9px; }
+
+/* 纸杯表：材质 · 克重 · 开料 三件并排 */
+.lp-cell { white-space: nowrap; }
+.lp-cell select[data-lmat] { width: 86px; }
+.lp-cell select[data-lsize] { width: 96px; }
+.lp-cell .mini { margin: 0 5px 0 2px; }
+.paper-row input[type=number] { width: 72px; }

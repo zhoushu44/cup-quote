@@ -306,18 +306,23 @@
 
       <div class="card" id="costTabStock">
         <div class="grad-head">
-          <span class="grad-label">纸（长宽 / 克重 / 吨价，可增删改）</span>
-          <span class="dim">这里加的纸，纸杯表里都能选到</span>
+          <span class="grad-label">材质吨价（每种材质一个价，改这里全材质生效）</span>
+          <span class="dim">纸钱 = 吨价 × 开料尺寸 × 克重</span>
         </div>
-        <div class="scroll" style="max-height:none"><table class="ct" id="matTable"></table></div>
+        <div class="scroll" style="max-height:none"><table class="ct" id="matPriceTable"></table></div>
+        <div class="grad-head">
+          <span class="grad-label">开料尺寸（只管长宽，决定一张纸能拼几片）</span>
+        </div>
+        <div class="scroll" style="max-height:none"><table class="ct" id="sizeTable"></table></div>
         <div class="grad-head">
           <span class="grad-label">工艺参数</span>
           <span class="dim">损耗 = 排版与加工的损耗比例</span>
         </div>
         <div class="params" id="paperGrid"></div>
         <p class="tip">
-          <b>纸</b>：一行 = 一张纸。整张纸尺寸（长×宽）决定能排多少扇片，克重决定杯重，吨价决定纸钱。<br>
-          <b>单只纸成本</b> = 整张纸钱 ÷ (拼版数 × (1 − 损耗%))。<br>
+          <b>材质吨价</b>：同一种材质不管多少克重，都是这一个吨价。<br>
+          <b>开料尺寸</b>：整张纸的长×宽，决定能排多少扇片。<b>克重不在这里</b>，在「纸杯」页每个杯型的每一层上选，决定杯重和单张纸重量。<br>
+          <b>单只纸成本</b> = 整张纸钱（吨价 × 长 × 宽 × 克重）÷ (拼版数 × (1 − 损耗%))。<br>
           <b>杯底</b>：卷筒纸切圆片，不参与排版，按净面积 × 克重 × 吨价 ÷ (1 − 损耗%) 计（切圆片的损耗）。
         </p>
       </div>
@@ -329,7 +334,8 @@
         </div>
         <div class="scroll"><table class="ct" id="paperTable"></table></div>
         <p class="tip">
-          <b>结构</b>：单层 / 双层 / 瓦楞 / 外贴。<b>双层会展开成两行</b>：内杯 + 外杯，各用各的纸、拼版与损耗。<br>
+          <b>结构</b>：单层 / 双层 / 瓦楞 / 外贴。<b>双层会展开成两行</b>：内杯 + 外杯，各用各的材质、克重、开料、拼版与损耗。<br>
+          <b>材质 · 克重 · 开料</b>：材质决定吨价（去「纸」页改），克重决定单张重量，开料尺寸决定拼版。三个随便组合，没有现成的纸会自动生成一张。<br>
           <b>拼版数</b>：一张纸能排多少片扇片。<b>留空 = 按该纸长宽自动算（相邻两片正倒相扣；内层每行 = 斜高 + 14mm 卷边余量，外层 = 斜高）</b>，填了就用你的实际排版（错缝/蜂窝后请填实测值）。<br>
           <b>损耗%</b>：默认 8%，有效拼版 = 拼版 × (1 − 损耗%)。<br>
           <b>单杯重量</b>：扇片净重 × 层数 + 杯底圆片净重，自动算出来，可去「重量·箱规」填实测值覆盖。
