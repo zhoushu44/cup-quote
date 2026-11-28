@@ -5306,6 +5306,7 @@
         crafts: q.crafts || [],
         paperGsm: num(q.cupGram) || 0,
         paperKw: paperKw.replace(/g$/i, ''),
+        saleMan: $('#erpSale').value.trim(),
         logistics: $('#erpLogi').value.trim(),
         paper: (selPa.value ? { suttleId: num(selPa.value), name: selPa.options[selPa.selectedIndex].getAttribute('data-name'), paperName: selPa.options[selPa.selectedIndex].getAttribute('data-paper') } : null),
         design: (state.quoteImg && state.quoteImg.src) ? {

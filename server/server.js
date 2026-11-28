@@ -331,6 +331,16 @@ async function serveApi(req, res, url) {
           });
           order.processList = rows;
         }
+        /* 业务员：写进订单本身的 salMan/salId（ERP 空着就显示下单账号），同时随客户建档 */
+        const salName = String(body3.saleMan || custIn.saleMan || '').trim();
+        if (salName) {
+          order.salMan = salName;
+          try {
+            const u = (await erp.saleManList(DATA)).filter(function (x) { return x.name === salName; })[0];
+            if (u) order.salId = u.id;
+          } catch (e) { /* 名单拉不到就只写名字 */ }
+        }
+
         /* 纸种：确认框里选了就直接用；没选就按报价的克重（+纸名关键词）在 ERP 产品纸种库里匹配 */
         if (body3.paper && body3.paper.suttleId) {
           order.paperSuttle = body3.paper.name || '';
