@@ -5253,6 +5253,11 @@
     var freightCharged = (state.freightPay !== 'collect') ? num(q.freight) : 0;
     var d0 = new Date(Date.now() + (num(q.leadDays) || 7) * 86400000);
     var defDate = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0') + '-' + String(d0.getDate()).padStart(2, '0');
+    /* 物流公司联动：报价单选的运费方式 → ERP 物流公司名（可改） */
+    var shipMap = { sf: '顺丰', yto: '圆通', zto: '中通快运', logistics: '创新物流' };
+    var shipDefault = shipMap[state.shipping];
+    if (shipDefault === undefined) shipDefault = state.shipping && state.shipping !== 'none' ? '创新物流' : '创新物流';
+    if (state.shipping === 'none') shipDefault = '';
     var layout = [q.spec.name, q.struct, q.lining, (q.crafts || []).join('、'), '四色印刷', '印刷要求(按图印刷)']
       .filter(Boolean).join(';') + ';';
     var remark = '报价单 ' + (q.no || '') + (state.freightPay === 'collect' ? '；运费到付' : '');
@@ -5266,8 +5271,8 @@
       '<label>装箱<select id="erpPk"></select></label>' +
       '<label>客户（报价单自动带过去，ERP 没有同名会自动建档）<span class="dim">' + esc(q.customer || '') + '　' + esc(q.contact || '') + '</span></label>' +
       '<label>业务员（选 ERP 系统用户，存进客户档案）<select id="erpSale"><option value="">（不填）</option></select></label>' +
-      '<label>交货日期<input id="erpDate" type="date" value="' + defDate + '"></label>' +
-      '<label>物流公司<input id="erpLogi" value="创新物流"></label>' +
+      '<label>交货日期（今天 + 生产周期' + (num(q.leadDays) || 7) + ' 天）<input id="erpDate" type="date" value="' + defDate + '"></label>' +
+      '<label>物流公司（按报价单的运费方式自动带出）<input id="erpLogi" value="' + esc(shipDefault) + '"></label>' +
       '<label>版面 / 工艺说明（进 ERP 的「订单详情」）<textarea id="erpLayout" rows="2">' + esc(layout) + '</textarea></label>' +
       '<label>备注<input id="erpRemark" value="' + esc(remark) + '"></label>' +
       '<div class="erp-foot"><button class="btn" data-erp-close>取消</button><button class="btn primary" id="erpGo">确认下单</button></div>');
