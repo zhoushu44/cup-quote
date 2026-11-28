@@ -5222,8 +5222,8 @@
       '<h3>下生产单到印刷 ERP</h3>' +
       '<div class="erp-sum">' + esc(q.spec.name) + '　' + esc(q.struct) + '　' + fq(q.qty) + ' 只 × ¥' + fm(q.price) +
       ' ＝ <b>¥' + fm(q.total) + '</b>' + (freightCharged > 0 ? '（含运费 ¥' + fm(freightCharged) + '）' : '') + '</div>' +
-      '<label>ERP 产品<select id="erpProd"></select></label>' +
-      '<label>纸种<select id="erpPaper"></select></label>' +
+      /* 产品与纸种自动按报价单匹配（隐藏，不需要人工选） */
+      '<div style="display:none"><select id="erpProd"></select><select id="erpPaper"></select></div>' +
       '<label>装箱<select id="erpPk"></select></label>' +
       '<label>客户（报价单自动带过去，ERP 没有同名会自动建档）<span class="dim">' + esc(q.customer || '') + '　' + esc(q.contact || '') + '</span></label>' +
       '<label>业务员（选 ERP 系统用户，存进客户档案）<select id="erpSale"><option value="">（不填）</option></select></label>' +
