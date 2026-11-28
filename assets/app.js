@@ -439,6 +439,7 @@
     if (!state.cupPaper) state.cupPaper = {};
     if (!state.addon) state.addon = {};
     if (!state.sizesExtra) state.sizesExtra = [];   // 「纸」页手动加的、还没被任何纸用上的开料
+    if (!state.matsExtra) state.matsExtra = [];     // 「纸」页手动加的材质（名称 + 吨价）
 
     // 加工费梯度：首次填充默认值，之后以用户填写为准
     ['make', 'print'].forEach(function (k) {
@@ -472,7 +473,7 @@
         lining: state.lining, qty: state.qty, crafts: state.crafts,
         plateAmort: state.plateAmort, urgent: state.urgent, quoteTier: state.quoteTier,
         quote: state.quote, gradients: state.gradients,
-        paper: state.paper, paperStock: state.paperStock, sizesExtra: state.sizesExtra, proc: state.proc,
+        paper: state.paper, paperStock: state.paperStock, sizesExtra: state.sizesExtra, matsExtra: state.matsExtra, proc: state.proc,
         craftGrid: state.craftGrid, addon: state.addon, lead: state.lead,
         shipGrid: state.shipGrid, wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, customSpecs: state.customSpecs, customCrafts: state.customCrafts, specOrder: state.specOrder, craftOrder: state.craftOrder,
         specHidden: state.specHidden, specDims: state.specDims,
@@ -504,7 +505,9 @@
       if (o.gradients && o.gradients.length) state.gradients = o.gradients;
       if (o.paper) state.paper = o.paper;
       if (o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
+      if (o.paperSel) state.paperSel = o.paperSel;
       if (o.sizesExtra) state.sizesExtra = o.sizesExtra;
+      if (o.matsExtra) state.matsExtra = o.matsExtra;
       if (o.cupPaper) state.cupPaper = o.cupPaper;
       if (o.proc) state.proc = o.proc;
       if (o.craftGrid) state.craftGrid = o.craftGrid;
@@ -890,7 +893,21 @@
   /* 报价页的纸张行：每层一行「克重 + 纸张」两列；成本按该材质的吨价算（同材质各克重同一吨价，
      克重只影响单张重量），开料尺寸 / 拼版沿用当前行 */
   function matLabel(base) {
+    var x = (state.matsExtra || []).filter(function (e) { return e.base === base; })[0];
+    if (x && x.name) return x.name;
     return { cupstock: '口杯纸', white: '白卡纸', gold: '金箔纸', silver: '银箔纸', foil: '铝箔纸', corr: '瓦楞纸' }[base] || base;
+  }
+  /* 这个材质现在还在不在（被删掉后，旧报价单里对它的手动选择要作废） */
+  function matExists(base) {
+    return stockRows().some(function (p) { return (p.base || '') === base; }) ||
+      (state.matsExtra || []).some(function (e) { return e.base === base; });
+  }
+  /* 该材质该用的吨价：有纸行看纸行，没有（刚加的材质）看材质自己 */
+  function matUnitPrice(base) {
+    var has = stockRows().some(function (p) { return (p.base || '') === base; });
+    if (has) return matPrice(base);
+    var x = (state.matsExtra || []).filter(function (e) { return e.base === base; })[0];
+    return x ? num(x.price) : 0;
   }
   /* 纸库的三个概念分开管（底层仍是一行一张纸，由这里按需合成）：
      材质 → 吨价（同材质所有行共用，改一处全改）
@@ -919,7 +936,7 @@
     var r = {
       id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       base: base, name: matLabel(base) + ' ' + len + '×' + wid + ' ' + gsm + 'g',
-      len: len, wid: wid, gsm: gsm, price: matPrice(base), desc: ''
+      len: len, wid: wid, gsm: gsm, price: matUnitPrice(base), desc: ''
     };
     stockRows().push(r);
     return r;
@@ -940,8 +957,14 @@
   }
   function matOptions() {
     var seen = {}, out = [];
+    (state.matsExtra || []).forEach(function (x) { if (x.base && !seen[x.base]) { seen[x.base] = 1; out.push({ base: x.base, name: matLabel(x.base) }); } });
     (state.paperStock || []).forEach(function (m) {
       if (m.base && !seen[m.base]) { seen[m.base] = 1; out.push({ base: m.base, name: matLabel(m.base) }); }
+    });
+    // 常用的排前面，手动加的排后面
+    ['cupstock', 'white', 'gold', 'silver', 'foil', 'corr'].slice().reverse().forEach(function (b) {
+      var i = out.map(function (o) { return o.base; }).indexOf(b);
+      if (i > 0) { var o = out.splice(i, 1)[0]; out.unshift(o); }
     });
     return out;
   }
@@ -950,12 +973,12 @@
     var p = paperById(L.paperId);
     var sel = (state.paperSel || {})[sp.id] || {};
     var s = sel[li];
-    if (!s || !s.base || !(num(s.gsm) > 0)) return p;
+    if (!s || !s.base || !(num(s.gsm) > 0) || !matExists(s.base)) return p;
     /* 开料尺寸跟着杯型走（拼版不变）；换材质只换吨价，改克重只换单张重量 */
     var base = s.base, gsm = num(s.gsm);
     return {
       id: p.id, base: base, len: num(p.len), wid: num(p.wid),
-      gsm: gsm, price: matPrice(base),
+      gsm: gsm, price: matUnitPrice(base),
       name: matLabel(base) + ' ' + num(p.len) + '×' + num(p.wid) + ' ' + gsm + 'g'
     };
   }
@@ -3195,33 +3218,105 @@
       var k = String(num(p.price));
       m.prices[k] = (m.prices[k] || 0) + 1;
     });
+    // 手动加的材质：还没有纸行时吨价记在材质自己身上
+    (state.matsExtra || []).forEach(function (x) {
+      var m = mats[x.base] = mats[x.base] || { base: x.base, prices: {}, n: 0 };
+      m.extra = x;
+      if (!m.n) m.prices[String(num(x.price))] = 1;
+    });
     var order = Object.keys(mats);
     // 常用材质排前面，其余按出现顺序
-    ['cupstock', 'white', 'gold', 'silver', 'foil', 'corr'].forEach(function (b) {
+    ['cupstock', 'white', 'gold', 'silver', 'foil', 'corr'].slice().reverse().forEach(function (b) {
       var i = order.indexOf(b);
       if (i > 0) { order.splice(i, 1); order.unshift(b); }
     });
-    var html = '<thead><tr><th class="l">材质</th><th>吨价（元/吨）</th><th class="l">备注</th></tr></thead><tbody>';
+    var html = '<thead><tr><th class="l">材质</th><th>吨价（元/吨）</th><th class="l">备注</th><th style="width:36px"></th></tr></thead><tbody>';
     order.forEach(function (b) {
       var m = mats[b], ks = Object.keys(m.prices).sort(function (a, c) { return m.prices[c] - m.prices[a]; });
-      var mixed = ks.length > 1;
-      html += '<tr data-mat="' + esc(b) + '"><td class="nm">' + esc(matLabel(b)) + '</td>' +
+      var mixed = m.n > 0 && ks.length > 1;
+      var nameCell = m.extra
+        ? '<input type="text" data-mname="' + esc(b) + '" value="' + esc(m.extra.name) + '" title="点一下可以改名" style="width:110px">'
+        : esc(matLabel(b));
+      var note;
+      if (!m.n) note = '<span class="mini">新加的材质，还没有杯型用上。到「纸杯」页某一层的材质里选它，纸会自动生成</span>';
+      else if (mixed) note = '<span style="color:#c0392b">⚠ 这个材质现在有 ' + ks.length + ' 种吨价（' +
+        ks.map(function (k) { return k + ' × ' + m.prices[k] + ' 张'; }).join('、') + '）。填左边的数字 = 全部统一成这个价</span>';
+      else note = '该材质的 ' + m.n + ' 张纸都用这个吨价';
+      html += '<tr data-mat="' + esc(b) + '"><td class="nm">' + nameCell + '</td>' +
         '<td><input type="number" min="0" step="50" data-mprice="' + esc(b) + '" value="' + num(ks[0]) + '"' +
         (mixed ? ' title="这个材质现在有多种吨价，填一个数会把它们全部统一"' : '') + '></td>' +
-        '<td class="dim">' + (mixed
-          ? '<span style="color:#c0392b">⚠ 这个材质现在有 ' + ks.length + ' 种吨价（' +
-            ks.map(function (k) { return k + ' × ' + m.prices[k] + ' 张'; }).join('、') + '）。填左边的数字 = 全部统一成这个价</span>'
-          : '该材质的 ' + m.n + ' 张纸都用这个吨价') + '</td></tr>';
+        '<td class="dim">' + note + '</td>' +
+        '<td class="ops-cell"><button class="rop rop-del" data-mat-del="' + esc(b) + '" title="删除这个材质">×</button></td></tr>';
     });
-    mt.innerHTML = html + '</tbody>';
+    html += '</tbody><tfoot><tr><td colspan="4" class="ops-cell"><button class="link" id="btnAddMat">＋ 添加材质</button>' +
+      '<span class="dim" style="margin-left:8px">填名称和吨价，再去「纸杯」页对应层选它</span></td></tr></tfoot>';
+    mt.innerHTML = html;
     $$('#matPriceTable input[data-mprice]').forEach(function (inp) {
       inp.onchange = function () {
         var v = Math.max(0, num(inp.value));
         setMatPrice(inp.dataset.mprice, v);
+        (state.matsExtra || []).forEach(function (x) { if (x.base === inp.dataset.mprice) x.price = v; });
         save(); renderMaterialTable(); renderPaperTable(); sync();
-        toast(matLabel(inp.dataset.mprice) + ' 的吨价已全部改成 ' + v);
+        toast(matLabel(inp.dataset.mprice) + ' 的吨价已改成 ' + v);
       };
     });
+    $$('#matPriceTable input[data-mname]').forEach(function (inp) {
+      inp.onchange = function () {
+        var v = inp.value.trim();
+        var x = (state.matsExtra || []).filter(function (e) { return e.base === inp.dataset.mname; })[0];
+        if (!x) return;
+        if (!v) { inp.value = x.name; return; }
+        x.name = v.slice(0, 12);
+        save(); renderMaterialTable(); renderPaperTable(); sync();
+      };
+    });
+    $$('#matPriceTable button[data-mat-del]').forEach(function (b) {
+      b.onclick = function () {
+        var base = b.dataset.matDel;
+        if (order.length <= 1) { toast('至少保留一种材质'); return; }
+        var rows = stockRows().filter(function (p) { return (p.base || '') === base; });
+        var used = [];
+        Object.keys(state.cupPaper || {}).forEach(function (sid) {
+          (state.cupPaper[sid].layers || []).forEach(function (L, i) {
+            if (rows.some(function (p) { return p.id === L.paperId; })) used.push((specById(sid) || {}).name + ' 第' + (i + 1) + '层');
+          });
+        });
+        // 被删材质的层改到：口杯纸（如果口杯纸还在），否则排最前的那种材质
+        var others = order.filter(function (x) { return x !== base; });
+        var fb = others.indexOf('cupstock') >= 0 ? 'cupstock' : others[0];
+        if (used.length && !confirm('材质「' + matLabel(base) + '」正被 ' + used.length + ' 个杯型层用着（' + used.slice(0, 4).join('、') + (used.length > 4 ? '…' : '') + '）。\n删除后它们会改成「' + matLabel(fb) + '」、开料和克重不变，纸价按「' + matLabel(fb) + '」的吨价算。继续？')) return;
+        if (!used.length && !confirm('删除材质「' + matLabel(base) + '」？' + (rows.length ? '它的 ' + rows.length + ' 张纸一并删除。' : ''))) return;
+        var ids = {}, oldOf = {};
+        rows.forEach(function (p) { ids[p.id] = 1; oldOf[p.id] = p; });
+        state.paperStock = stockRows().filter(function (p) { return !ids[p.id]; });
+        state.matsExtra = (state.matsExtra || []).filter(function (x) { return x.base !== base; });
+        var fix = function (L) {
+          if (!L || !ids[L.paperId]) return;
+          var old = oldOf[L.paperId];
+          L.paperId = autoRow(fb, old.len, old.wid, old.gsm).id;
+        };
+        Object.keys(state.cupPaper || {}).forEach(function (sid) {
+          var c = state.cupPaper[sid];
+          (c.layers || []).forEach(fix); (c.stash || []).forEach(fix);
+        });
+        // 报价页手动选过这个材质的，退回该层自己的纸
+        Object.keys(state.paperSel || {}).forEach(function (sid) {
+          var s = state.paperSel[sid];
+          if (!s) return;
+          Object.keys(s).forEach(function (li) { if (s[li] && s[li].base === base) delete s[li]; });
+        });
+        save(); renderMaterialTable(); renderPaperTable(); sync();
+        toast('已删除材质「' + matLabel(base) + '」');
+      };
+    });
+    var addMat = $('#btnAddMat');
+    if (addMat) addMat.onclick = function () {
+      var base = 'm' + Date.now().toString(36);
+      state.matsExtra.push({ base: base, name: '新材质', price: matUnitPrice('cupstock') || 6800 });
+      save(); renderMaterialTable(); renderPaperTable();
+      var inp = $('#matPriceTable input[data-mname="' + base + '"]');
+      if (inp) { inp.focus(); inp.select(); }
+    };
 
     // —— 开料尺寸 ——
     var sizes = {};
@@ -4863,7 +4958,7 @@
     function backupObj() {
       return {
         v: 5, stockV: 2, gradients: state.gradients,
-        paper: state.paper, paperStock: state.paperStock, sizesExtra: state.sizesExtra, cupPaper: state.cupPaper, proc: state.proc,
+        paper: state.paper, paperStock: state.paperStock, sizesExtra: state.sizesExtra, matsExtra: state.matsExtra, cupPaper: state.cupPaper, proc: state.proc,
         craftGrid: state.craftGrid, addon: state.addon,
         specOrder: state.specOrder, craftOrder: state.craftOrder, teaState: state.tea,
         tiers: D.tiers, invoices: D.invoices,
@@ -4883,6 +4978,7 @@
       // 旧备份（纸库还是整张纸）：纸张 id 已对不上，纸杯配置按开料表重建，纸库用当前的
       if (o.stockV === 2 && o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
       if (o.sizesExtra) state.sizesExtra = o.sizesExtra;
+      if (o.matsExtra) state.matsExtra = o.matsExtra;
       state.cupPaper = o.stockV === 2 ? (o.cupPaper || {}) : {};
       if (o.proc) state.proc = o.proc;
       if (o.craftGrid) state.craftGrid = o.craftGrid;
@@ -4949,7 +5045,7 @@
     $('#btnExportAll').onclick = function () {
       saveBlob(new Blob([JSON.stringify({
         v: 5, stockV: 2, gradients: state.gradients,
-        paper: state.paper, paperStock: state.paperStock, sizesExtra: state.sizesExtra, cupPaper: state.cupPaper, proc: state.proc,
+        paper: state.paper, paperStock: state.paperStock, sizesExtra: state.sizesExtra, matsExtra: state.matsExtra, cupPaper: state.cupPaper, proc: state.proc,
         craftGrid: state.craftGrid, addon: state.addon,
         specOrder: state.specOrder, craftOrder: state.craftOrder, teaState: state.tea,
         tiers: D.tiers, invoices: D.invoices,
@@ -5216,7 +5312,7 @@
   var QUOTE_KEYS = ['specId', 'lining', 'qty', 'crafts', 'plateAmort', 'urgent', 'quoteTier', 'quote', 'invoice', 'shipping', 'freightPay',
     'mode', 'tea', 'ocrText', 'custOcrText', 'quoteImg', '_no', '_noDate', 'paperSel'];
   var FP_KEYS = QUOTE_KEYS.filter(function (k) { return k !== '_no' && k !== '_noDate'; });
-  var COST_KEYS = ['cupPaper', 'gradients', 'paper', 'paperStock', 'sizesExtra', 'proc', 'craftGrid', 'addon', 'lead', 'shipGrid', 'wt', 'boxCfg',
+  var COST_KEYS = ['cupPaper', 'gradients', 'paper', 'paperStock', 'sizesExtra', 'matsExtra', 'proc', 'craftGrid', 'addon', 'lead', 'shipGrid', 'wt', 'boxCfg',
     'shipZones', 'customSpecs', 'customCrafts', 'specOrder', 'craftOrder', 'specHidden', 'specDims', 'params'];
   var D_KEYS = ['tea', 'company', 'tiers', 'invoices'];
 
@@ -5559,7 +5655,9 @@
       var paperKw = /双淋膜/.test(paperTxt) ? '双淋膜' : /单淋膜/.test(paperTxt) ? '单淋膜' :
         (function () {
           for (var k in kwMap) if (paperTxt.indexOf(k) >= 0) return kwMap[k];
-          return paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
+          // 自定义材质（如「竹浆纸」）：ERP 里的纸种名一般不带「纸」字，去掉末尾再匹配
+          var w = paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
+          return w.length >= 3 && /纸$/.test(w) ? w.slice(0, -1) : w;
         })();
       api('POST', '/api/erp', {
         customer: {
@@ -5747,6 +5845,45 @@
     recognize: recognize, state: state, data: D, save: save, renderShipQuote: renderShipQuote,
 // 已保存报价单 / 服务器接口（调试与自测用）
 view: VIEW, api: api, openById: openById, saveQuote: saveQuote, renderBanner: renderBanner, costSnapshot: costSnapshot,
-switchPage: page, sync: sync
+switchPage: page, sync: sync,
+// 客户信息弹窗（客户跟进跳过来做报价时用，见文件末尾）
+openCustModal: openCustModal, confirmCust: confirmCust
   };
+})();
+/* ============================================================
+ * 和「客户跟进」打通（并入时加的，独立于上面的逻辑）
+ *   1) 顶栏「客户跟进」入口；直接双击 index.html 打开时用不了（需要起服务）
+ *   2) 客户信息弹窗里的「查跟进档案」：带着客户名去客户跟进里找这个客户
+ *   3) 从客户跟进点「给他做报价」过来：/?cust=客户名&contact=联系人 → 自动填好客户信息
+ * ============================================================ */
+(function () {
+  function crmUrl(q) { return '/crm/' + (q ? '?q=' + encodeURIComponent(q) : ''); }
+  function initCrmLinks() {
+    var A = window.PC_APP;
+    var entry = document.getElementById('btnCrm');
+    if (entry && location.protocol === 'file:') {
+      entry.href = '#';
+      entry.onclick = function () { alert('「客户跟进」需要先启动服务：双击仓库里的 启动.bat，再用它打开的地址进来。'); return false; };
+    }
+    var go = document.getElementById('btnCustCrm');
+    if (go) go.onclick = function () {
+      var name = (document.getElementById('qCustomer').value || '').trim();
+      window.open(crmUrl(name), '_blank');
+    };
+    var p = new URLSearchParams(location.search);
+    var cust = (p.get('cust') || '').trim();
+    if (!cust || !A || !A.openCustModal || !A.confirmCust) return;
+    /* 清掉地址栏里的参数，刷新时不会反复带入 */
+    if (history.replaceState) history.replaceState(null, '', location.pathname);
+    if (A.switchPage) A.switchPage('quote');
+    A.openCustModal();
+    var fill = function (id, v) {
+      var n = document.getElementById(id);
+      if (n && v) { n.value = v; n.dispatchEvent(new Event('input', { bubbles: true })); }
+    };
+    fill('#qCustomer', cust);
+    fill('#qContact', (p.get('contact') || '').trim());
+    A.confirmCust();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initCrmLinks); else initCrmLinks();
 })();

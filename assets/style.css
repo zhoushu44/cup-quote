@@ -1003,3 +1003,7 @@ label.lbl-up:hover { color: var(--ac); }
 .lp-cell select[data-lsize] { width: 96px; }
 .lp-cell .mini { margin: 0 5px 0 2px; }
 .paper-row input[type=number] { width: 72px; }
+
+/* 客户跟进入口（并入时加的） */
+a.link.crm-link { text-decoration: none; white-space: nowrap; }
+a.link.crm-link:hover { color: var(--ac); }
