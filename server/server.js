@@ -386,6 +386,8 @@ async function serveApi(req, res, url) {
         }
         if (!order.logistics) order.logistics = body3.logistics || '创新物流';
         if (!order.mouldFactory) order.mouldFactory = '车间';
+        /* 包装要求（packageInfo）：随单写入，普通下单流程 ERP 里就有这栏 */
+        order.packageInfo = String(body3.packInfo || '').slice(0, 100) || null;
         /* 版面图：先传到 ERP 的设计稿库，再把地址挂到订单上 */
         if (body3.design && body3.design.b64) {
           const up = await erp.uploadDesign(DATA, body3.design.name || 'layout.jpg', body3.design.b64);

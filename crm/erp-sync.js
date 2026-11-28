@@ -123,4 +123,4 @@ async function syncAll(DATA, onProgress) {
   return meta;
 }
 
-module.exports = { status, loadCfg, syncAll };
+module.exports = { status, loadCfg, login, get, syncAll };

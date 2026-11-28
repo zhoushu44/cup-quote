@@ -5269,6 +5269,7 @@
       /* 产品与纸种自动按报价单匹配（隐藏，不需要人工选） */
       '<div style="display:none"><select id="erpProd"></select><select id="erpPaper"></select></div>' +
       '<label>装箱<select id="erpPk"></select></label>' +
+      '<label>包装要求（写进 ERP 的包装要求，可选）<input id="erpPack" list="erpPackList" placeholder="选一个或直接输入"><datalist id="erpPackList"><option value="定制彩盒"><option value="定制纸箱"><option value="定制收缩膜"><option value="客户自备"><option value="不用包装"></datalist></label>' +
       '<label>客户（报价单自动带过去，ERP 没有同名会自动建档）<span class="dim">' + esc(q.customer || '') + '　' + esc(q.contact || '') + '</span></label>' +
       '<label>业务员（选 ERP 系统用户，存进客户档案）<select id="erpSale"><option value="">（不填）</option></select></label>' +
       '<label>交货日期（今天 + 生产周期' + (num(q.leadDays) || 7) + ' 天）<input id="erpDate" type="date" value="' + defDate + '"></label>' +
@@ -5352,6 +5353,7 @@
         paperKw: paperKw.replace(/g$/i, ''),
         saleMan: $('#erpSale').value.trim(),
         logistics: $('#erpLogi').value.trim(),
+        packInfo: $('#erpPack') ? $('#erpPack').value.trim() : '',
         paper: (selPa.value ? { suttleId: num(selPa.value), name: selPa.options[selPa.selectedIndex].getAttribute('data-name'), paperName: selPa.options[selPa.selectedIndex].getAttribute('data-paper') } : null),
         design: (state.quoteImg && state.quoteImg.src) ? {
           name: (q.no ? q.no : 'layout') + '-版面图.jpg',
