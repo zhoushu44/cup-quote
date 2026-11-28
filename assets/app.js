@@ -341,7 +341,7 @@
     var layers = [], cost = 0, gram = 0, noFit = false;
     for (var i = 0; i < cc.layers.length; i++) {
       var L = cc.layers[i] || {};
-      var p = paperById(L.paperId);
+      var p = effPaper(sp, L, i);
       var gsm = num(p.gsm) || 268;
       var loss = clamp(num(L.loss), 0, 90) / 100;
       var pack = num(L.pack) > 0 ? Math.round(num(L.pack)) : autoPack(sp, p, cfg, i);
@@ -467,6 +467,7 @@
     try {
       localStorage.setItem(KEY, JSON.stringify({
         specId: state.specId, cupPaper: state.cupPaper, stockV: 2,
+        paperSel: state.paperSel,
         lining: state.lining, qty: state.qty, crafts: state.crafts,
         plateAmort: state.plateAmort, urgent: state.urgent, quoteTier: state.quoteTier,
         quote: state.quote, gradients: state.gradients,
@@ -884,7 +885,34 @@
     return s > 0 ? ' + 调机 ' + (Math.round(s * 10) / 10) + '%' : '';
   }
 
-  /* 报价页的纸张行：下拉直接换纸（每层各自选），拼版 / 损耗仍去成本页改 */
+  /* 报价页的纸张行：每层一行「克重 + 纸张」两列；成本按该材质的吨价算（同材质各克重同一吨价，
+     克重只影响单张重量），开料尺寸 / 拼版沿用当前行 */
+  function matLabel(base) {
+    return { cupstock: '纸杯纸', white: '白卡纸', gold: '金箔纸', silver: '银箔纸', foil: '铝箔纸', corr: '瓦楞纸' }[base] || base;
+  }
+  function matOptions() {
+    var seen = {}, out = [];
+    (state.paperStock || []).forEach(function (m) {
+      if (m.base && !seen[m.base]) { seen[m.base] = 1; out.push({ base: m.base, name: matLabel(m.base) }); }
+    });
+    return out;
+  }
+  /* 某层生效的纸：有手动选择（paperSel）就按「材质找吨价行 + 指定克重」合成 */
+  function effPaper(sp, L, li) {
+    var p = paperById(L.paperId);
+    var sel = (state.paperSel || {})[sp.id] || {};
+    var s = sel[li];
+    if (!s || !s.base || !(num(s.gsm) > 0)) return p;
+    /* 同材质吨价行：优先同克重，其次任意一行（吨价相同） */
+    var rows = (state.paperStock || []).filter(function (m) { return m.base === s.base; });
+    var row = rows.filter(function (m) { return num(m.gsm) === num(s.gsm); })[0] || rows[0] || p;
+    var gsm = num(s.gsm) > 0 ? num(s.gsm) : (num(row.gsm) || num(p.gsm) || 268);
+    return {
+      id: row.id, base: s.base, len: num(row.len) || num(p.len), wid: num(row.wid) || num(p.wid),
+      gsm: gsm, price: num(row.price) || num(p.price),
+      name: matLabel(s.base) + ' ' + (num(row.len) || num(p.len)) + '×' + (num(row.wid) || num(p.wid)) + ' ' + gsm + 'g'
+    };
+  }
   function renderPapers() {
     var box = $('#paperLayers');
     if (!box) return;
@@ -892,19 +920,38 @@
     var sp = spec();
     var cc = cupCfg(sp);
     var st = structOf(cc.structure);
+    if (!state.paperSel) state.paperSel = {};
+    if (!state.paperSel[sp.id]) state.paperSel[sp.id] = {};
+    var selAll = state.paperSel[sp.id];
     cc.layers.forEach(function (L, i) {
-      var p = paperById(L.paperId);
+      var p = effPaper(sp, L, i);
       var row = el('div', 'paper-row');
       row.appendChild(el('span', 'ptag', st.layers > 1 ? (i === 0 ? '内杯' : '外杯') : '杯身'));
+      /* 克重 */
+      var g = document.createElement('input');
+      g.type = 'number'; g.min = 150; g.max = 500; g.step = 1;
+      g.value = num(p.gsm) || '';
+      g.title = '克重 g/m²（改了杯重、纸钱、ERP 纸种都跟着变）';
+      g.style.width = '72px';
+      g.onchange = function () {
+        if (!selAll[i]) selAll[i] = { base: p.base || 'cupstock', gsm: 0 };
+        selAll[i].base = p.base || 'cupstock';
+        selAll[i].gsm = num(this.value) || 0;
+        save(); renderPapers(); sync();
+      };
+      row.appendChild(g);
+      row.appendChild(el('span', 'ptxt', 'g'));
+      /* 纸张材质 */
       var sel = document.createElement('select');
-      sel.title = '换纸（要加新纸去成本页「纸」）';
-      // 纸名里已带克重（如「口杯纸 850×530 268g」）就不再重复拼
-      sel.innerHTML = (state.paperStock || []).map(function (m) {
-        var label = paperLabel(m);
-        return '<option value="' + m.id + '"' + (L.paperId === m.id ? ' selected' : '') + '>' + esc(label) + '</option>';
+      sel.title = '纸张（吨价取成本页纸库里该材质的价）';
+      var curBase = p.base || (paperById(L.paperId).base) || 'cupstock';
+      sel.innerHTML = matOptions().map(function (m) {
+        return '<option value="' + m.base + '"' + (m.base === curBase ? ' selected' : '') + '>' + esc(m.name) + '</option>';
       }).join('');
       sel.onchange = function () {
-        setLayerPaper(cc, L, this.value);
+        if (!selAll[i]) selAll[i] = { base: this.value, gsm: 0 };
+        selAll[i].base = this.value;
+        selAll[i].gsm = num(p.gsm) || num(selAll[i].gsm) || 0;
         save(); renderPapers(); sync();
       };
       row.appendChild(sel);
@@ -915,7 +962,7 @@
         ' ｜ 损耗 ' + (num(pl0.loss) || 0) + '%' + lossStartTxt(pl0)));
       box.appendChild(row);
     });
-    var tip = el('div', 'ptip', '<a href="#" id="lnkCostPaper">去成本页改拼版 / 损耗 / 加新纸 →</a>');
+    var tip = el('div', 'ptip', '<a href="#" id="lnkCostPaper">去成本页改拼版 / 损耗 / 吨价 →</a>');
     box.appendChild(tip);
     var a = $('#lnkCostPaper');
     if (a) a.onclick = function (e) {
@@ -1364,7 +1411,7 @@
 
     var papers = [];
     cupCfg(sp).layers.forEach(function (L, i) {
-      var p = paperById(L.paperId);
+      var p = effPaper(sp, L, i);
       papers.push((st.layers > 1 ? (i === 0 ? '内层 ' : '外层 ') : '') + esc(paperLabel(p)));
     });
 
@@ -4680,6 +4727,7 @@
     /* 应用一份备份 JSON（导入备份 / 启动时从服务器取回共用） */
     function applyBackup(o) {
       if (o.gradients) state.gradients = o.gradients;
+      if (o.paperSel) state.paperSel = o.paperSel;
       if (o.paper) state.paper = o.paper;
       // 旧备份（纸库还是整张纸）：纸张 id 已对不上，纸杯配置按开料表重建，纸库用当前的
       if (o.stockV === 2 && o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
@@ -5353,10 +5401,14 @@
         operate: 2, orderStatus: 0, origin: '线下渠道', autoLayoutFlag: 0,
         planVoList: [{ packageType: 0, packageId: num(packSelVal), count: count, num: per }]
       };
-      /* 纸种关键词与工艺名，给服务端去 ERP 字典里匹配 */
+      /* 纸种关键词与工艺名，给服务端去 ERP 字典里匹配（材质名→ERP 纸种名前缀） */
       var paperTxt = String(q.paper || '');
-      var paperKw = /铝箔/.test(paperTxt) ? '铝箔' : /银箔|金箔/.test(paperTxt) ? '金箔' :
-        paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
+      var kwMap = { '白卡纸': '白卡', '金箔纸': '金箔', '银箔纸': '银箔', '铝箔纸': '铝箔', '牛皮纸': '牛皮', '涂布纸': '涂布', '纸杯纸': '口杯' };
+      var paperKw = /双淋膜/.test(paperTxt) ? '双淋膜' : /单淋膜/.test(paperTxt) ? '单淋膜' :
+        (function () {
+          for (var k in kwMap) if (paperTxt.indexOf(k) >= 0) return kwMap[k];
+          return paperTxt.trim().split(/\s+/).filter(function (w) { return w !== '内层' && w !== '外层'; })[0] || '';
+        })();
       api('POST', '/api/erp', {
         customer: {
           name: cust, contact: String(q.contact || '').trim(),

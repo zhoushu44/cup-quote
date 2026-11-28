@@ -14,12 +14,28 @@
     <button data-page="daily">今日跟进 <i id="badgeDaily" style="display:none"></i></button>
     <button data-page="sleep">沉睡唤醒</button>
     <button data-page="all">全部客户</button>
+    <button data-page="log">跟进记录</button>
+    <button data-page="screen">跟进统计</button>
     <button data-page="settings">设置</button>
   </div>
-  <div class="bar-right">
+  <div class="bar-right" id="barRight" style="display:none">
+    <span id="meInfo"></span>
     <span id="metaInfo">加载中…</span>
     <button class="btn" id="btnSync">同步 ERP</button>
+    <button class="btn" id="btnLogout">退出</button>
   </div>
+</div>
+
+<!-- 登录 / 首次设置主管账号 -->
+<div class="login" id="login" style="display:none">
+  <form class="login-card" id="loginForm">
+    <h1>客户营销</h1>
+    <div class="dim" id="loginTip">请登录</div>
+    <input id="loginName" placeholder="姓名" autocomplete="username" required maxlength="20">
+    <input id="loginPass" type="password" placeholder="密码" autocomplete="current-password" required>
+    <button class="btn pri" type="submit" id="loginBtn">登录</button>
+    <div class="err" id="loginErr"></div>
+  </form>
 </div>
 
 <main>
@@ -42,6 +58,7 @@
         <select data-f="sale"><option value="">全部业务员</option></select>
         <select data-f="status"></select>
         <label><input type="checkbox" data-f="key"> 只看重点</label>
+        <label><input type="checkbox" data-f="cool"> 只看已跟进的</label>
         <input type="text" data-f="q" placeholder="搜客户名 / 联系人 / 手机 / 备注" style="width:230px">
         <select data-f="sort">
           <option value="score">排序：优先级</option><option value="since">排序：最久没下单</option>
@@ -52,7 +69,7 @@
       </div>
       <div class="dim" id="hint-daily" style="margin-bottom:8px"></div>
       <table data-t="list"><thead><tr>
-        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>备注</th>
+        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>跟进 / 备注</th>
       </tr></thead><tbody></tbody></table>
       <div class="pager"><span data-t="count"></span><button class="btn sm" data-act="prev">上一页</button><span data-t="pg"></span><button class="btn sm" data-act="next">下一页</button></div>
     </div>
@@ -63,6 +80,7 @@
         <select data-f="sale"><option value="">全部业务员</option></select>
         <select data-f="status"></select>
         <label><input type="checkbox" data-f="key"> 只看重点</label>
+        <label><input type="checkbox" data-f="cool"> 只看已跟进的</label>
         <input type="text" data-f="q" placeholder="搜客户名 / 联系人 / 手机 / 备注" style="width:230px">
         <select data-f="sort">
           <option value="score">排序：优先级</option><option value="money">排序：近12个月金额</option>
@@ -73,7 +91,7 @@
       </div>
       <div class="dim" id="hint-sleep" style="margin-bottom:8px"></div>
       <table data-t="list"><thead><tr>
-        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>备注</th>
+        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>跟进 / 备注</th>
       </tr></thead><tbody></tbody></table>
       <div class="pager"><span data-t="count"></span><button class="btn sm" data-act="prev">上一页</button><span data-t="pg"></span><button class="btn sm" data-act="next">下一页</button></div>
     </div>
@@ -84,6 +102,7 @@
         <select data-f="sale"><option value="">全部业务员</option></select>
         <select data-f="status"></select>
         <label><input type="checkbox" data-f="key"> 只看重点</label>
+        <label><input type="checkbox" data-f="cool"> 只看已跟进的</label>
         <input type="text" data-f="q" placeholder="搜客户名 / 联系人 / 手机 / 备注" style="width:230px">
         <select data-f="sort">
           <option value="money">排序：近12个月金额</option><option value="score">排序：优先级</option>
@@ -94,9 +113,54 @@
       </div>
       <div class="dim" id="hint-all" style="margin-bottom:8px"></div>
       <table data-t="list"><thead><tr>
-        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>备注</th>
+        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>跟进 / 备注</th>
       </tr></thead><tbody></tbody></table>
       <div class="pager"><span data-t="count"></span><button class="btn sm" data-act="prev">上一页</button><span data-t="pg"></span><button class="btn sm" data-act="next">下一页</button></div>
+    </div>
+  </section>
+
+  <!-- 跟进记录 -->
+  <section class="page" id="page-log">
+    <div class="card">
+      <div class="filters" id="logFilters">
+        <select id="logDays"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option></select>
+        <select id="logSale"><option value="">全部业务员</option></select>
+        <span class="dim">业务员点了哪个结果、写了什么，都记在这里，最多显示 500 条</span>
+      </div>
+      <table id="tblLog"><thead><tr>
+        <th>时间</th><th>客户</th><th>业务员</th><th>跟进人</th><th>结果</th><th>备注</th>
+      </tr></thead><tbody></tbody></table>
+      <div class="pager"><span id="logCount"></span></div>
+    </div>
+  </section>
+
+  <!-- 跟进统计：按周期看跟进情况 -->
+  <section class="page" id="page-screen">
+    <div class="card">
+      <div class="filters">
+        <select id="scPeriod">
+          <option value="today">今天</option><option value="7" selected>近 7 天</option><option value="30">近 30 天</option><option value="month">本月</option>
+        </select>
+        <select id="scSale"><option value="">全部业务员名下</option></select>
+        <span class="dim" id="scRange"></span>
+      </div>
+      <div class="kpis" id="scKpis"></div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>业务员排行 <span class="dim">按客户归属；条形按跟进次数</span></h3>
+        <table id="tblRank"><thead><tr><th>业务员</th><th>跟进次数</th><th>等回复</th><th>已下单</th><th>暂缓</th><th>联系不上</th><th>覆盖客户</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <h3 id="scTrendTitle">每天跟进次数</h3>
+        <div class="trend" id="scTrend"></div>
+        <div class="dim" id="scTrendSum"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>跟进明细 <span class="dim">点一行打开客户</span></h3>
+      <table id="tblSc"><thead><tr><th>时间</th><th>客户</th><th>业务员</th><th>跟进人</th><th>结果</th><th>备注</th></tr></thead><tbody></tbody></table>
+      <div class="pager"><span id="scCount"></span></div>
     </div>
   </section>
 
@@ -120,6 +184,9 @@
         <label>超过</label><input data-s="lostDays"><span class="dim">天没下单 → 流失（不再进名单）</span>
         <label>两次下单间隔小于</label><input data-s="minGap"><span class="dim">天 → 视为同一批，不算一个周期</span>
         <label>间隔超过</label><input data-s="maxGap"><span class="dim">天 → 不参与算周期</span>
+        <div class="h">跟进之后多久再提醒</div>
+        <label>结果是「有意向，等回复」</label><input data-s="followReplyDays"><span class="dim">天后再出现在名单里</span>
+        <label>其他结果（最近不需要 / 已下单 / 联系不上）</label><input data-s="followLaterDays"><span class="dim">天后再出现；期间客户下了单会自动恢复</span>
       </div>
     </div>
     <div class="card">
@@ -132,6 +199,20 @@
         <span class="dim">勾上的不参与统计</span>
       </div>
       <div style="margin-top:12px"><button class="btn pri" id="btnSaveRules">保存规则</button></div>
+    </div>
+    <div class="card">
+      <h3>人员 <span class="dim">主管能看全部客户、改规则、管账号；业务员登录后只看到自己名下的客户</span></h3>
+      <table id="tblUsers"><thead><tr>
+        <th>姓名</th><th>角色</th><th>对应业务员</th><th>最近登录</th><th></th>
+      </tr></thead><tbody></tbody></table>
+      <div class="form" style="grid-template-columns:160px 160px 160px 1fr auto; margin-top:12px">
+        <input id="uName" placeholder="姓名">
+        <input id="uPass" type="password" placeholder="密码（至少 6 位）">
+        <select id="uRole"><option value="sale">业务员</option><option value="admin">主管</option></select>
+        <select id="uSale"></select>
+        <button class="btn pri" id="btnAddUser">添加账号</button>
+      </div>
+      <div class="dim" style="margin-top:6px">业务员账号要选 ERP 里的业务员名字，和 ERP 客户档案里的「业务员」对得上才会看到自己的客户。</div>
     </div>
     <div class="card">
       <h3>ERP 账号与同步 <span class="dim">只读 ERP，不回写；密码存在服务器 data/erp.json，不进 git</span></h3>

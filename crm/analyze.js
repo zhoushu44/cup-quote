@@ -25,7 +25,9 @@ const DEFAULTS = {
   lostDays: 365,           // 这么多天没下单 → 流失
   voidFlags: [1],          // 这些作废标记的订单不算
   minGap: 7,               // 两次下单间隔小于这个天数视为同一批，不算一个周期
-  maxGap: 365              // 间隔超过这个天数不参与算周期（中间断档了）
+  maxGap: 365,             // 间隔超过这个天数不参与算周期（中间断档了）
+  followReplyDays: 7,      // 跟进结果是「有意向，等回复」→ 这么多天后再提醒
+  followLaterDays: 30      // 其他结果（最近不需要 / 已下单 / 联系不上）→ 这么多天后再提醒
 };
 
 const STATUS_ORDER = ['overdue', 'due', 'sleep', 'once', 'normal', 'lost', 'none'];
