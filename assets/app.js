@@ -4661,7 +4661,63 @@
       };
     });
 
-    $('#btnSaveCost').onclick = function () { save(); toast('成本已保存'); };
+    /* 备份快照（导出/存服务器共用） */
+    function backupObj() {
+      return {
+        v: 5, stockV: 2, gradients: state.gradients,
+        paper: state.paper, paperStock: state.paperStock, cupPaper: state.cupPaper, proc: state.proc,
+        craftGrid: state.craftGrid, addon: state.addon,
+        specOrder: state.specOrder, craftOrder: state.craftOrder, teaState: state.tea,
+        tiers: D.tiers, invoices: D.invoices,
+        params: state.params, company: D.company,
+        wt: state.wt, boxCfg: state.boxCfg, shipZones: state.shipZones, shipGrid: state.shipGrid,
+        customSpecs: state.customSpecs, customCrafts: state.customCrafts,
+        specHidden: state.specHidden, specDims: state.specDims,
+        tea: D.tea, lead: state.lead
+      };
+    }
+
+    /* 应用一份备份 JSON（导入备份 / 启动时从服务器取回共用） */
+    function applyBackup(o) {
+      if (o.gradients) state.gradients = o.gradients;
+      if (o.paper) state.paper = o.paper;
+      // 旧备份（纸库还是整张纸）：纸张 id 已对不上，纸杯配置按开料表重建，纸库用当前的
+      if (o.stockV === 2 && o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
+      state.cupPaper = o.stockV === 2 ? (o.cupPaper || {}) : {};
+      if (o.proc) state.proc = o.proc;
+      if (o.craftGrid) state.craftGrid = o.craftGrid;
+      if (o.addon) state.addon = o.addon;
+      if (o.params) Object.assign(state.params, o.params);
+      if (o.tiers) D.tiers = o.tiers;
+      if (o.invoices) D.invoices = o.invoices;
+      if (o.materials) (o.materials || []).forEach(function (mm) {
+        var m = (state.paperStock || []).filter(function (x) { return x.id === mm.id; })[0] ||
+          (state.paperStock || []).filter(function (x) { return (x.base || x.id) === mm.id; })[0];
+        if (m && mm.price != null) m.price = num(mm.price);
+      });
+      if (o.wt) state.wt = o.wt;
+      if (o.boxCfg) state.boxCfg = o.boxCfg;
+      if (o.shipZones) state.shipZones = o.shipZones;
+      if (o.shipGrid) state.shipGrid = o.shipGrid;
+      if (o.customSpecs) state.customSpecs = o.customSpecs.filter(function (s) { return !/纸桶|纸碗/.test(s.group || ''); });
+      if (o.customCrafts) state.customCrafts = o.customCrafts;
+      if (o.specOrder) state.specOrder = o.specOrder;
+      if (Array.isArray(o.specHidden)) state.specHidden = o.specHidden;
+      state.specDims = (o.specDims && typeof o.specDims === 'object') ? o.specDims : {};
+      applySpecDims();
+      if (o.craftOrder) state.craftOrder = o.craftOrder;
+      if (o.teaState) state.tea = Object.assign(state.tea, o.teaState);
+      if (o.tea) D.tea = o.tea;
+      if (o.lead) state.lead = o.lead;
+      if (o.company) Object.assign(D.company, o.company);
+    }
+
+    $('#btnSaveCost').onclick = function () {
+      save();
+      api('POST', '/api/cost', backupObj()).then(function (r) {
+        toast(r && r.ok ? '成本已保存（本机 + 服务器）' : '已存本机，服务器保存失败：' + ((r && r.error) || ''));
+      });
+    };
     $('#btnFillSuggest').onclick = function () {
       if (!confirm('用参考值填充「加工」梯度表所有格？已填的会被覆盖。')) return;
       ['make', 'print'].forEach(function (k) {
@@ -4712,37 +4768,7 @@
       fr.onload = function () {
         try {
           var o = JSON.parse(fr.result);
-          if (o.gradients) state.gradients = o.gradients;
-          if (o.paper) state.paper = o.paper;
-          // 旧备份（纸库还是整张纸）：纸张 id 已对不上，纸杯配置按开料表重建，纸库用当前的
-          if (o.stockV === 2 && o.paperStock && o.paperStock.length) state.paperStock = o.paperStock;
-          state.cupPaper = o.stockV === 2 ? (o.cupPaper || {}) : {};
-          if (o.proc) state.proc = o.proc;
-          if (o.craftGrid) state.craftGrid = o.craftGrid;
-          if (o.addon) state.addon = o.addon;
-          if (o.params) Object.assign(state.params, o.params);
-          if (o.tiers) D.tiers = o.tiers;
-          if (o.invoices) D.invoices = o.invoices;
-          if (o.materials) (o.materials || []).forEach(function (mm) {
-            var m = (state.paperStock || []).filter(function (x) { return x.id === mm.id; })[0] ||
-              (state.paperStock || []).filter(function (x) { return (x.base || x.id) === mm.id; })[0];
-            if (m && mm.price != null) m.price = num(mm.price);
-          });
-          if (o.wt) state.wt = o.wt;
-          if (o.boxCfg) state.boxCfg = o.boxCfg;
-          if (o.shipZones) state.shipZones = o.shipZones;
-          if (o.shipGrid) state.shipGrid = o.shipGrid;
-          if (o.customSpecs) state.customSpecs = o.customSpecs.filter(function (s) { return !/纸桶|纸碗/.test(s.group || ''); });
-          if (o.customCrafts) state.customCrafts = o.customCrafts;
-          if (o.specOrder) state.specOrder = o.specOrder;
-          if (Array.isArray(o.specHidden)) state.specHidden = o.specHidden;
-          state.specDims = (o.specDims && typeof o.specDims === 'object') ? o.specDims : {};
-          applySpecDims();
-          if (o.craftOrder) state.craftOrder = o.craftOrder;
-          if (o.teaState) state.tea = Object.assign(state.tea, o.teaState);
-          if (o.tea) D.tea = o.tea;
-          if (o.lead) state.lead = o.lead;
-          if (o.company) Object.assign(D.company, o.company);
+          applyBackup(o);
           initData(); save(); page('cost'); sync(); toast('已导入');
         } catch (e) { toast('格式不对'); }
       };
@@ -4768,6 +4794,18 @@
   function init() {
     load(); initData();
     renderSpecSelect(); bind();
+    /* 本机没有任何存档（换电脑/清缓存）→ 自动取回服务器上的成本参数 */
+    try {
+      if (!localStorage.getItem(KEY)) {
+        api('GET', '/api/cost').then(function (r) {
+          if (r && r.ok && r.data && r.data.gradients) {
+            applyBackup(r.data);
+            initData(); save(); sync(); renderSpecSelect();
+            toast('已从服务器取回成本参数');
+          }
+        });
+      }
+    } catch (e) { /* 隐私模式等拿不到 localStorage 就跳过 */ }
     // 模式
     $$('.mode-btn').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === (state.mode || 'cup')); });
     var isTea = state.mode === 'tea';

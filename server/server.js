@@ -163,7 +163,7 @@ function serveStatic(req, res, url) {
 
 /* ---------- 接口 ---------- */
 async function serveApi(req, res, url) {
-  const m = url.pathname.match(/^\/api\/(search|quote|seq|erp)(?:\/([a-z0-9]+))?$/i);
+  const m = url.pathname.match(/^\/api\/(search|quote|seq|erp|cost)(?:\/([a-z0-9]+))?$/i);
   const route = m && m[1].toLowerCase();
   const arg = m && m[2];
   const jsonHead = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -181,6 +181,21 @@ async function serveApi(req, res, url) {
   const origin = req.headers.origin;
   if (origin && origin !== 'http://' + req.headers.host && origin !== 'https://' + req.headers.host) {
     return json(res, 403, { ok: false, error: '不接受其他网站的请求' });
+  }
+
+  /* 成本参数快照：存到 DATA/cost_params.json（挂载进 docker 的 /data 卷，随容器持久化） */
+  if (route === 'cost') {
+    if (req.method === 'GET') {
+      try { return json(res, 200, { ok: true, data: JSON.parse(fs.readFileSync(DATA + '/cost_params.json', 'utf8')) }); }
+      catch (e) { return json(res, 200, { ok: true, data: null }); }
+    }
+    if (req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch (e) { return json(res, 400, { ok: false, error: '内容不是有效的数据' }); }
+      if (!body || !body.gradients) return json(res, 200, { ok: false, error: '不是成本参数快照' });
+      fs.writeFileSync(DATA + '/cost_params.json', JSON.stringify(body, null, 2));
+      return json(res, 200, { ok: true });
+    }
   }
 
   if (route === 'quote' && req.method === 'GET' && arg) {
