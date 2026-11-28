@@ -4661,6 +4661,7 @@
       };
     });
 
+    $('#btnSaveCost').onclick = function () { save(); toast('成本已保存'); };
     $('#btnFillSuggest').onclick = function () {
       if (!confirm('用参考值填充「加工」梯度表所有格？已填的会被覆盖。')) return;
       ['make', 'print'].forEach(function (k) {
