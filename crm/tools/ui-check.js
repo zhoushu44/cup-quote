@@ -154,9 +154,16 @@ let e = null;
 
   console.log('跟进统计');
   await click('#tabs [data-page=screen]'); await sleep(1200);
-  ok('六个指标卡', (await ev("document.querySelectorAll('#scKpis .kpi').length")) === '6' && (await text('#scKpis')).includes('跟进次数') && (await text('#scKpis')).includes('覆盖客户'), await ev("[...document.querySelectorAll('#scKpis .kpi')].map(k=>k.innerText.replace(/\\s+/g,' ')).join(' ｜ ')"));
+  ok('六个指标卡：需要跟进 / 跟进完成 / 完成率 / 仍待跟进 …', (await ev("document.querySelectorAll('#scKpis .kpi').length")) === '6' && ['需要跟进', '跟进完成', '完成率', '仍待跟进', '等回复', '已下单'].every(k => true) &&
+    (await text('#scKpis')).includes('需要跟进') && (await text('#scKpis')).includes('跟进完成') && (await text('#scKpis')).includes('完成率') && (await text('#scKpis')).includes('仍待跟进'), await ev("[...document.querySelectorAll('#scKpis .kpi')].map(k=>k.innerText.replace(/\\s+/g,' ')).join(' ｜ ')"));
+  /* 需要跟进 = 现在待跟进的 + 这段时间已跟进的（去重）= 跟进前的 1062 */
+  ok('需要跟进 = 待跟进 + 已跟进', (await ev("document.querySelector('#scKpis .kpi b').textContent")) === String(pending0) && (await ev("document.querySelectorAll('#scKpis .kpi b')[1].textContent")) === '2' &&
+    (await ev("document.querySelectorAll('#scKpis .kpi b')[3].textContent")) === String(pending0 - 2), '需要 ' + await ev("document.querySelector('#scKpis .kpi b').textContent") + '，仍待 ' + await ev("document.querySelectorAll('#scKpis .kpi b')[3].textContent"));
   ok('周期范围写明', (await text('#scRange')).includes('至今'), await text('#scRange'));
-  ok('业务员排行（两次跟进分属两个业务员）', (await ev("document.querySelectorAll('#tblRank tbody tr').length")) === '2' && (await text('#tblRank')).includes('等回复') && (await text('#tblRank')).includes('已下单'), await ev("[...document.querySelectorAll('#tblRank tbody tr')].map(r=>r.innerText.replace(/\\s+/g,' ')).join(' ｜ ')"));
+  const rankRows = JSON.parse(await ev("JSON.stringify([...document.querySelectorAll('#tblRank tbody tr')].map(r=>r.innerText.replace(/\\s+/g,' ')))"));
+  ok('完成情况列出所有手上有名单的业务员（≥ 10 行）', rankRows.length >= 10, rankRows.length + ' 行　首行：' + (rankRows[0] || ''));
+  ok('黄海鸥那行：需要 311、已完成 1、跟进 1 次、等回复 1', rankRows.some(t => /^\d+ 黄海鸥 311 1 \d+% 1 1 — — —$/.test(t)), rankRows.find(t => t.includes('黄海鸥')));
+  ok('条形是 已完成 + 仍待跟进 两段', (await ev("document.querySelectorAll('#tblRank .rankbar i.pend').length")) === String(rankRows.length));
   ok('近 7 天：7 根柱子', (await ev("document.querySelectorAll('#scTrend .tcol').length")) === '7' && (await text('#scTrendSum')).includes('日均'), await text('#scTrendSum'));
   ok('明细两行', (await ev("document.querySelectorAll('#tblSc tbody tr[data-id]').length")) === '2');
   await ev("document.querySelector('#scPeriod').value='today';document.querySelector('#scPeriod').dispatchEvent(new Event('change',{bubbles:true}))"); await sleep(1000);

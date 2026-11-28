@@ -123,10 +123,12 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; paddi
 #tblRank th, #tblRank td { padding: 7px 10px; }
 #tblRank th:first-child, #tblRank td:first-child { width: 150px; padding-left: 0; }
 #tblRank th:not(:first-child), #tblRank td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; width: 76px; }
-#tblRank .rankbar { position: relative; height: 20px; background: var(--line2); border-radius: 5px; margin-left: auto; }
-#tblRank .rankbar i { display: block; height: 100%; min-width: 2px; background: var(--ac-soft); border: 1px solid #e6c3b0; border-radius: 5px; }
-#tblRank .rankbar span { position: absolute; right: 8px; top: 0; font-weight: 600; font-size: 12px; line-height: 18px; }
-#tblRank tr:first-child .rankbar span { left: 8px; right: auto; }
+#tblRank th:nth-child(5), #tblRank td:nth-child(5) { width: 210px; }
+#tblRank .rankline { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+#tblRank .rankline b { min-width: 20px; font-size: 12px; }
+#tblRank .rankbar { display: flex; height: 18px; background: var(--line2); border-radius: 5px; width: 160px; overflow: hidden; }
+#tblRank .rankbar i { display: block; height: 100%; background: #ead9cf; }
+#tblRank .rankbar i.pend { background: var(--ac); }
 /* 趋势：柱子站在一条基线上，标签太密时隔几个显示一个 */
 .trend { display: flex; align-items: flex-end; gap: 3px; height: 230px; padding: 14px 0 0; border-bottom: 1px solid var(--line); }
 .tcol { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }

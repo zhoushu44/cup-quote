@@ -394,20 +394,32 @@ async function loadScreen() {
   const cnt = k => rows.filter(h => h.result === k).length;
   const ids = new Set(rows.map(h => h.id));
   const mix = { reply: cnt('reply'), ordered: cnt('ordered'), later: cnt('later'), lost: cnt('lost') };
+  /* 需要跟进 = 现在还在待跟进名单上的 + 这段时间已经跟进过的（去重）；完成 = 这段时间已跟进的客户 */
+  const pendBy = {}; let pending = 0;
+  (overview ? overview.sales : []).forEach(g => { pendBy[g.saleMan] = g.pending; if (!sale || g.saleMan === sale) pending += g.pending; });
+  const need = pending + ids.size, done = ids.size;
+  const rate = need ? Math.round(100 * done / need) : 0;
   const kpi = (v, l, c) => '<div class="kpi"><b' + (c ? ' style="color:' + c + '"' : '') + '>' + v + '</b><span class="dim">' + l + '</span></div>';
-  $('#scKpis').innerHTML = kpi(rows.length, '跟进次数') + kpi(ids.size, '覆盖客户') + kpi(mix.reply, RESULT.reply.name, 'var(--amber)') +
-    kpi(mix.ordered, RESULT.ordered.name, 'var(--green)') + kpi(mix.later, RESULT.later.name) + kpi(mix.lost, RESULT.lost.name, 'var(--red)');
+  $('#scKpis').innerHTML = kpi(need, '需要跟进', 'var(--ac)') + kpi(done, '跟进完成', 'var(--green)') + kpi(rate + '%', '完成率') +
+    kpi(pending, '仍待跟进') + kpi(mix.reply, RESULT.reply.name, 'var(--amber)') + kpi(mix.ordered, RESULT.ordered.name, 'var(--green)');
 
   /* 业务员排行：按客户归属 */
   const by = {};
   rows.forEach(h => { const k = h.saleMan || '（未分配）'; by[k] = by[k] || { n: 0, reply: 0, ordered: 0, later: 0, lost: 0, ids: new Set() }; const g = by[k]; g.n++; g[h.result]++; g.ids.add(h.id); });
-  const rank = Object.values(by).map(g => Object.assign({}, g, { saleMan: Object.keys(by).find(k => by[k] === g), ids: g.ids.size }))
-    .sort((a, b) => b.n - a.n);
-  const max = Math.max(1, ...rank.map(g => g.n));
-  $('#tblRank tbody').innerHTML = rank.length ? rank.map((g, i) => '<tr><td><b>' + (i + 1) + '</b>　' + esc(g.saleMan) + '</td>' +
-    '<td><div class="rankbar"><i style="width:' + Math.round(100 * g.n / max) + '%"></i><span>' + g.n + '</span></div></td>' +
-    '<td>' + (g.reply || '—') + '</td><td>' + (g.ordered || '—') + '</td><td>' + (g.later || '—') + '</td><td>' + (g.lost || '—') + '</td><td>' + g.ids + '</td></tr>').join('')
-    : '<tr><td colspan="7" class="dim">这段时间还没有跟进记录</td></tr>';
+  /* 业务员排行：按客户归属；没有跟进记录但手上有名单的业务员也要列出来 */
+  const sales2 = overview ? overview.sales.filter(g => g.saleMan !== '（未分配）' && (!sale || g.saleMan === sale)) : [];
+  const rank = sales2.map(g => { const x = by[g.saleMan]; return { saleMan: g.saleMan, pending: g.pending, n: x ? x.n : 0, ids: x ? x.ids.size : 0, reply: x ? x.reply : 0, ordered: x ? x.ordered : 0, later: x ? x.later : 0, lost: x ? x.lost : 0 }; })
+    .concat(Object.keys(by).filter(k => !pendBy.hasOwnProperty(k) && (!sale || k === sale)).map(k => Object.assign({}, by[k], { saleMan: k, pending: 0, ids: by[k].ids.size })))
+    .filter(g => g.pending + g.n > 0)
+    .sort((a, b) => b.n - a.n || b.pending - a.pending);
+  const max = Math.max(1, ...rank.map(g => g.n + g.pending));
+  const cell = v => v ? String(v) : '—';
+  $('#tblRank tbody').innerHTML = rank.length ? rank.map((g, i) => { const need2 = g.pending + g.ids, r2 = need2 ? Math.round(100 * g.ids / need2) : 0;
+    return '<tr><td><b>' + (i + 1) + '</b>　' + esc(g.saleMan) + '</td>' +
+    '<td>' + need2 + '</td><td><b>' + g.ids + '</b></td><td>' + r2 + '%</td>' +
+    '<td><div class="rankline"><div class="rankbar"><i style="width:' + Math.round(100 * g.n / max) + '%"></i><i class="pend" style="width:' + Math.round(100 * g.pending / max) + '%"></i></div><b>' + g.n + '</b></div></td>' +
+    '<td>' + cell(g.reply) + '</td><td>' + cell(g.ordered) + '</td><td>' + cell(g.later) + '</td><td>' + cell(g.lost) + '</td></tr>'; }).join('')
+    : '<tr><td colspan="9" class="dim">这段时间没有要跟进的客户</td></tr>';
 
   /* 趋势：今天看按小时，其余按天 */
   const today = $('#scPeriod').value === 'today';
