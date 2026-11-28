@@ -2,13 +2,14 @@
    用法：node tools/sync-once.js */
 'use strict';
 const path = require('path');
-const DATA = path.join(__dirname, '..', 'data');
+const DATA = path.join(__dirname, '..', '..', '..', 'data', 'crm');
 const sync = require('../erp-sync');
 
 const count = (rows, k) => rows.reduce((m, r) => (m[r[k]] = (m[r[k]] || 0) + 1, m), {});
 
 (async () => {
-  const meta = await sync.syncAll(DATA, m => console.log('  ' + m));
+  // ERP 账号在上一级目录（和报价系统共用 data/erp.json）
+const meta = await sync.syncAll(DATA, m => console.log('  ' + m), path.join(DATA, '..'));
   console.log('完成：', JSON.stringify(meta));
   const orders = JSON.parse(require('fs').readFileSync(path.join(DATA, 'orders.json'), 'utf8'));
   const customers = JSON.parse(require('fs').readFileSync(path.join(DATA, 'customers.json'), 'utf8'));

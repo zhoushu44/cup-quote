@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const env = require('./env');
-const OUT = path.join(__dirname, '..', 'docs');
+const OUT = path.join(__dirname, '..', '..', '..', '..', 'docs', 'crm');
 const CDP = 9497;
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -67,7 +67,7 @@ let e = null;
   await send('Runtime.enable'); await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
   e = await env.start();
-  await send('Page.navigate', { url: e.base + '/' });
+  await send('Page.navigate', { url: e.base + '/crm/' });
 
   console.log('首次使用：建主管账号');
   ok('没登录时显示登录层', await wait("getComputedStyle(document.querySelector('#login')).display === 'flex'"));
@@ -217,6 +217,26 @@ let e = null;
   await click('#tabs [data-page=log]'); await sleep(1200);
   ok('业务员的跟进记录只有自己名下', Number(await ev("document.querySelectorAll('#tblLog tbody tr[data-id]').length")) === 1 && (await text('#tblLog')).includes('界面业务员') && !(await text('#tblLog')).includes('主管测试'), await ev("document.querySelector('#tblLog tbody tr').innerText.split('\\t').join(' | ')"));
   await ev("document.querySelector('#loginName').value='';");
+
+  console.log('并入报价系统：入口与打通');
+  await send('Page.navigate', { url: e.base + '/crm/' }); await sleep(1800);
+  ok('客户跟进左上角有「返回报价」', await ev("document.querySelector('.back-link') && document.querySelector('.back-link').getAttribute('href')") === '/');
+  /* 挑一个名字不会被别的客户名包含的（这样按名字搜只有一个结果） */
+  const pick = await ev("(async()=>{const r=await (await fetch('/api/crm/list?view=daily&size=500')).json();const c=r.rows.find(x=>r.rows.filter(y=>y.name.includes(x.name)).length===1);return JSON.stringify(c?{id:c.id,name:c.name}:null)})()");
+  const cust = JSON.parse(pick);
+  ok('找到一个可按名字搜的客户', !!cust, cust && cust.name);
+  await send('Page.navigate', { url: e.base + '/crm/?q=' + encodeURIComponent(cust.name) });
+  ok('带客户名进来 → 直接打开这个客户', await wait("!!document.querySelector('#drawer.on h2') && document.querySelector('#drawer.on h2').textContent.includes(" + JSON.stringify(cust.name) + ")"), await text('#drawer h2'));
+  const qlink = await ev("document.querySelector('#drawer .quote-link') ? document.querySelector('#drawer .quote-link').getAttribute('href') : ''");
+  ok('详情里有「给他做报价」，地址带上客户名', !!qlink && decodeURIComponent(qlink).includes('cust=' + cust.name), qlink);
+  const err0 = errors.length;
+  await send('Page.navigate', { url: e.base + qlink }); await sleep(2500);
+  ok('跳到报价页面，客户信息已带入', (await text('#custSummary')).includes(cust.name), await text('#custSummary'));
+  ok('地址栏里的参数已清掉', (await ev('location.search')) === '', await ev('location.search'));
+  ok('报价顶栏有「客户跟进」入口', await ev("document.querySelector('#btnCrm') && document.querySelector('#btnCrm').getAttribute('href')") === '/crm/');
+  ok('客户弹窗里有「查跟进档案」', (await ev("!!document.querySelector('#btnCustCrm')")) === 'true');
+  await shot('crm-quote.png');
+  ok('报价页面没有因为并入出现报错', errors.length === err0, errors.slice(err0).join(' | '));
 
   console.log('\n前端报错：' + (errors.length ? '\n' + errors.join('\n') : '无'));
   if (errors.length) fail++;

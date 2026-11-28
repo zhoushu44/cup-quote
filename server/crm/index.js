@@ -1,25 +1,26 @@
 /* ============================================================
- *  客户营销系统 · 服务端（不依赖任何第三方包）
- *    1) 托管 public/ 下的页面
- *    2) /api/*：登录、概览、名单、客户详情、跟进、跟进记录、规则、人员、ERP 同步
- *  数据都在 DATA 目录（默认 ./data，可用环境变量 DATA 改）：
+ *  客户跟进 · 服务端模块（不依赖任何第三方包）
+ *  挂在报价系统的 server/server.js 里：
+ *    页面   /crm/            → public/（由报价系统的 serveStatic 托管）
+ *    接口   /api/crm/*       → 登录、概览、名单、客户详情、跟进、跟进记录、规则、人员、ERP 同步
+ *  数据目录（报价系统的 DATA/crm/）：
  *    customers.json / orders.json / meta.json   ← ERP 同步来的
  *    settings.json  规则        notes.json      ← 备注、不做营销
  *    follows.json   跟进记录    users.json      ← 账号（密码只存加盐哈希）
- *    secret.json    会话签名密钥  erp.json       ← ERP 账号
+ *    secret.json    会话签名密钥
+ *  ERP 账号和报价系统共用一份：DATA/erp.json（上一级目录）。
  *  对 ERP 只读，不回写任何东西。
  * ============================================================ */
 'use strict';
-const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const sync = require('./erp-sync');
 const { analyze, parseTime, DEFAULTS } = require('./analyze');
 
-const PORT = parseInt(process.env.PORT || '6656', 10);
-const DATA = process.env.DATA || path.join(__dirname, 'data');
-const PUB = path.join(__dirname, 'public');
+const API = '/api/crm';                       // 报价系统把 /api/crm/xxx 的请求交给这里
+let DATA = '';                                // 本模块的数据目录
+let ERP = '';                                 // ERP 账号所在目录（和报价系统共用）
 const MAX_BODY = 1024 * 1024;
 const AUTO_SYNC_AFTER = 12 * 3600 * 1000;      // 数据超过 12 小时，启动时自动同步一次
 const DAY = 86400000;
@@ -39,12 +40,16 @@ function writeJson(file, obj) {
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 1));
   fs.renameSync(tmp, file);
 }
-const F = {
-  customers: path.join(DATA, 'customers.json'), orders: path.join(DATA, 'orders.json'),
-  meta: path.join(DATA, 'meta.json'), settings: path.join(DATA, 'settings.json'),
-  notes: path.join(DATA, 'notes.json'), follows: path.join(DATA, 'follows.json'),
-  users: path.join(DATA, 'users.json'), secret: path.join(DATA, 'secret.json')
-};
+let F = {};
+function setDirs(data, erpData) {
+  DATA = data; ERP = erpData || data;
+  F = {
+    customers: path.join(DATA, 'customers.json'), orders: path.join(DATA, 'orders.json'),
+    meta: path.join(DATA, 'meta.json'), settings: path.join(DATA, 'settings.json'),
+    notes: path.join(DATA, 'notes.json'), follows: path.join(DATA, 'follows.json'),
+    users: path.join(DATA, 'users.json'), secret: path.join(DATA, 'secret.json')
+  };
+}
 
 /* ---------- 分析缓存（数据、规则、备注或跟进变了才重算） ---------- */
 let cache = null;
@@ -74,7 +79,7 @@ async function runSync(auto) {
   if (job.running) return job;
   job.running = true; job.error = ''; job.log = (auto ? '数据较旧，自动同步…\n' : '开始同步…\n');
   try {
-    await sync.syncAll(DATA, m => { job.log += '  ' + m + '\n'; if (job.log.length > 4000) job.log = job.log.slice(-4000); });
+    await sync.syncAll(DATA, m => { job.log += '  ' + m + '\n'; if (job.log.length > 4000) job.log = job.log.slice(-4000); }, ERP);
     job.log += '完成\n';
     invalidate();
   } catch (e) {
@@ -86,8 +91,11 @@ async function runSync(auto) {
 }
 
 /* ---------- 账号与会话 ---------- */
-let SECRET = readJson(F.secret, {}).secret;
-if (!SECRET) { SECRET = crypto.randomBytes(32).toString('hex'); writeJson(F.secret, { secret: SECRET }); }
+let SECRET = '';
+function setSecret() {
+  SECRET = readJson(F.secret, {}).secret;
+  if (!SECRET) { SECRET = crypto.randomBytes(32).toString('hex'); writeJson(F.secret, { secret: SECRET }); }
+}
 const sign = s => crypto.createHmac('sha256', SECRET).update(s).digest('base64url');
 const users = () => readJson(F.users, []);
 const publicUser = u => ({ id: u.id, name: u.name, role: u.role, saleMan: u.saleMan || '', lastLogin: u.lastLogin || 0 });
@@ -146,20 +154,6 @@ const norm = s => String(s == null ? '' : s).toLowerCase().replace(/[^0-9a-z\u4e
 const dayNum = ms => { const d = new Date(ms + 8 * 3600000); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); };
 const todayNum = () => dayNum(Date.now());
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
-
-function serveStatic(req, res, url) {
-  let p = decodeURIComponent(url.pathname);
-  if (p === '/' || p === '') p = '/index.html';
-  const file = path.normalize(path.join(PUB, p));
-  if (file.indexOf(PUB) !== 0 || p.indexOf('/.') >= 0) return send(res, 403, '禁止访问');
-  fs.readFile(file, (err, buf) => {
-    if (err) return send(res, 404, '找不到页面');
-    send(res, 200, buf, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' });
-  });
-}
-
 /* ---------- 名单筛选 ---------- */
 /* view：daily 今日跟进（逾期 + 快到期 + 重点客户里的沉睡）/ sleep 沉睡唤醒 / all 全部 */
 const VIEWS = {
@@ -201,7 +195,7 @@ const ADMIN_ONLY = { '/api/sync': 1, '/api/erp': 1, '/api/settings': 1, '/api/us
 
 async function serveApi(req, res, url) {
   const q = url.searchParams;
-  const p = url.pathname;
+  const p = '/api' + (url.pathname.slice(API.length) || '/');     // /api/crm/overview → /api/overview
   const method = req.method;
 
   /* ---- 不用登录的三个 ---- */
@@ -245,20 +239,20 @@ async function serveApi(req, res, url) {
   if (p === '/api/meta' && method === 'GET') {
     const d = data();
     const stale = !d.meta.ts || Date.now() - d.meta.ts > AUTO_SYNC_AFTER;
-    if (stale && !job.running && sync.status(DATA).configured) runSync(true);
+    if (stale && !job.running && sync.status(ERP).configured) runSync(true);
     return json(res, 200, { ok: true, user: publicUser(user), meta: d.meta, sync: job, settings: d.settings,
-      erp: user.role === 'admin' ? sync.maskCfg(DATA) : null });
+      erp: user.role === 'admin' ? sync.maskCfg(ERP) : null });
   }
 
   if (p === '/api/sync' && method === 'POST') {
-    if (!sync.status(DATA).configured) return json(res, 200, { ok: false, error: 'ERP 账号还没配置' });
+    if (!sync.status(ERP).configured) return json(res, 200, { ok: false, error: 'ERP 账号还没配置' });
     runSync(false);
     return json(res, 200, { ok: true });
   }
 
   if (p === '/api/erp' && method === 'POST') {
     const b = await bodyOf(req);
-    const c = sync.writeCfg(DATA, { url: b.url, user: b.user, pass: b.pass || null });
+    const c = sync.writeCfg(ERP, { url: b.url, user: b.user, pass: b.pass || null });
     return json(res, 200, { ok: true, erp: { url: c.url, user: c.user, configured: !!(c.user && c.pass), pass: '******' } });
   }
 
@@ -456,25 +450,28 @@ function newUser(name, pass, role, saleMan) {
     salt, hash: hashPw(pass, salt), lastLogin: 0, ts: Date.now() };
 }
 
-/* ---------- 入口 ---------- */
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
-  if (url.pathname === '/healthz') return send(res, 200, 'ok\n', { 'Content-Type': 'text/plain' });
-  if (url.pathname.indexOf('/api/') === 0) {
-    if (req.method === 'POST') {
-      const o = req.headers.origin;
-      if (o && o !== 'http://' + req.headers.host && o !== 'https://' + req.headers.host) return json(res, 403, { ok: false, error: '不接受其他网站的请求' });
+/* ---------- 入口（由报价系统的 server/server.js 调用） ---------- */
+/* 处理 /api/crm/* 的请求。只接受本站发来的写请求（和原来的独立版一样） */
+function handleApi(req, res, url) {
+  if (req.method === 'POST') {
+    const o = req.headers.origin;
+    if (o && o !== 'http://' + req.headers.host && o !== 'https://' + req.headers.host) {
+      return Promise.resolve(json(res, 403, { ok: false, error: '不接受其他网站的请求' }));
     }
-    return serveApi(req, res, url).catch(e => {
-      if (e.message !== 'too large') console.error(e);
-      if (!res.headersSent) json(res, e.message === 'too large' ? 413 : 500, { ok: false, error: e.message === 'too large' ? '内容太大' : '服务器出错了' });
-    });
   }
-  if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '不支持的方法');
-  serveStatic(req, res, url);
-});
+  return serveApi(req, res, url).catch(e => {
+    if (e.message !== 'too large') console.error('[crm]', e);
+    if (!res.headersSent) json(res, e.message === 'too large' ? 413 : 500, { ok: false, error: e.message === 'too large' ? '内容太大' : '服务器出错了' });
+  });
+}
 
-const n = build();
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('客户营销系统已启动：http://localhost:' + PORT + '　客户 ' + n.rows.length + ' 个，订单 ' + (n.meta.orders || 0) + ' 条，数据目录 ' + DATA);
-});
+/* 挂载：data = 本模块的数据目录；erpData = ERP 账号所在目录（不传就和 data 同一个）。
+ * 返回 { handleApi, customers, orders }，报价系统启动时调用一次 */
+function mount(opts) {
+  setDirs(opts.data, opts.erpData);
+  setSecret();
+  const n = build();
+  return { handleApi, customers: n.rows.length, orders: n.meta.orders || 0, data: DATA };
+}
+
+module.exports = { mount, API };

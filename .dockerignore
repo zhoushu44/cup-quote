@@ -31,6 +31,12 @@ VERSION.md
 docs/
 *.md
 
+# ---- 本地运行数据与测试（绝不进镜像：有客户数据和 ERP 账号）----
+data/
+crm/
+server/crm/tools/
+docs/crm/
+
 # ---- Node / 构建产物 ----
 node_modules
 dist

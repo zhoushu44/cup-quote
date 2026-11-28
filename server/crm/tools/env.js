@@ -6,16 +6,18 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(__dirname, '..', '..', '..');          // 仓库根目录
+const DATA = path.join(ROOT, 'data', 'crm');                 // 真实数据在这里（只用来复制一份）
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function start() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-test-'));
-  const data = path.join(dir, 'data');
-  fs.mkdirSync(data);
+  const data = path.join(dir, 'data');                       // 报价系统的数据目录
+  const crmData = path.join(data, 'crm');                    // 客户跟进的数据在它下面
+  fs.mkdirSync(crmData, { recursive: true });
   for (const f of ['customers.json', 'orders.json', 'meta.json', 'settings.json']) {
-    const src = path.join(ROOT, 'data', f);
-    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(data, f));
+    const src = path.join(DATA, f);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(crmData, f));
   }
   const port = Number(process.env.CRM_TEST_PORT) || 6700 + Math.floor(Math.random() * 200);   // 可用环境变量固定端口，方便排查
   /* 设了 CRM_TEST_TRACE 时，记录服务端每个连接的建立/关闭/错误（排查连接问题用） */
@@ -29,7 +31,7 @@ async function start() {
         s.on('clientError', (e, c) => console.error(ms(), '[clientError]', e.code, e.message)); return s; };`);
     args.push('-r', pre);
   }
-  args.push(path.join(ROOT, 'server.js'));
+  args.push(path.join(ROOT, 'server', 'server.js'));          // 合并后只有一个服务：报价 + 客户跟进
   /* 服务输出写进临时目录里的 server.log，排查时看 */
   const logFile = path.join(dir, 'server.log');
   const log = fs.createWriteStream(logFile);

@@ -34,3 +34,7 @@ secrets.*
 deploy/local/
 plink.exe
 
+# 本地运行数据（报价单、客户跟进数据、ERP 账号）
+data/
+# 客户跟进测试截图（含真实客户名，不入库）
+docs/crm/

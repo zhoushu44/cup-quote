@@ -2,7 +2,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const DATA = path.join(__dirname, '..', 'data');
+const DATA = path.join(__dirname, '..', '..', '..', 'data', 'crm');
 const orders = JSON.parse(fs.readFileSync(path.join(DATA, 'orders.json'), 'utf8'));
 
 const key = (r, ks) => ks.map(k => r[k]).join(' | ');

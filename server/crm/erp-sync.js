@@ -121,8 +121,10 @@ function writeJson(file, obj) {
   fs.renameSync(tmp, file);
 }
 
-/* 全量同步。旧文件先留着，全部拉完才覆盖，中途失败不会把本地数据弄坏 */
-async function syncAll(DATA, onProgress) {
+/* 全量同步。旧文件先留着，全部拉完才覆盖，中途失败不会把本地数据弄坏。
+ * OUT = 数据写到哪；CFG = ERP 账号在哪（和报价系统共用 DATA/erp.json），不传就和 OUT 同一个目录 */
+async function syncAll(OUT, onProgress, CFG) {
+  const DATA = CFG || OUT;
   const say = m => { if (onProgress) onProgress(m); };
 
   say('拉取客户档案…');
@@ -134,10 +136,10 @@ async function syncAll(DATA, onProgress) {
   const orders = os.map(slimOrder);
   say('订单 ' + orders.length + ' 条');
 
-  writeJson(path.join(DATA, 'customers.json'), customers);
-  writeJson(path.join(DATA, 'orders.json'), orders);
+  writeJson(path.join(OUT, 'customers.json'), customers);
+  writeJson(path.join(OUT, 'orders.json'), orders);
   const meta = { ts: Date.now(), customers: customers.length, orders: orders.length };
-  writeJson(path.join(DATA, 'meta.json'), meta);
+  writeJson(path.join(OUT, 'meta.json'), meta);
   return meta;
 }
 

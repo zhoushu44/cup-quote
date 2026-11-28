@@ -5877,8 +5877,10 @@ openCustModal: openCustModal, confirmCust: confirmCust
     if (history.replaceState) history.replaceState(null, '', location.pathname);
     if (A.switchPage) A.switchPage('quote');
     A.openCustModal();
-    var fill = function (id, v) {
-      var n = document.getElementById(id);
+    /* 注意：传的是选择器（#qCustomer），用 querySelector 取；
+       原来写的是 getElementById('#qCustomer')，带 # 号永远取不到，客户名不会带入 */
+    var fill = function (sel, v) {
+      var n = document.querySelector(sel);
       if (n && v) { n.value = v; n.dispatchEvent(new Event('input', { bubbles: true })); }
     };
     fill('#qCustomer', cust);

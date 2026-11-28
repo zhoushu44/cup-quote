@@ -31,9 +31,13 @@ const HINTS = {
   all: '全部客户（含流失和没下过单的）。点任意一行看详情、写备注、排除不该做营销的客户。'
 };
 const LIST_PAGES = ['daily', 'sleep', 'all'];
+const API_BASE = '/api/crm';              // 并入报价系统后，接口都在 /api/crm 下
+/* 调用处沿用独立版的写法（'/api/xxx'），这里统一去掉 /api 前缀再拼上 /api/crm，
+   否则会拼成 /api/crm/api/xxx，接口全部 404。 */
+const apiPath = url => API_BASE + String(url).replace(/^\/api/, '');
 
 async function api(method, url, body) {
-  const r = await fetch(url, method === 'POST'
+  const r = await fetch(apiPath(url), method === 'POST'
     ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }
     : { cache: 'no-store' });
   const j = await r.json().catch(() => ({}));
@@ -93,7 +97,7 @@ $('#loginForm').addEventListener('submit', async e => {
 $('#btnLogout').addEventListener('click', async () => { await api('POST', '/api/logout'); me = null; showLogin('已退出'); });
 
 /* 登录成功：按角色调整界面，然后加载首页 */
-function enter(user) {
+async function enter(user) {
   me = user;
   $('#login').style.display = 'none';
   $('#barRight').style.display = 'flex';
@@ -109,6 +113,16 @@ function enter(user) {
   LIST_PAGES.forEach(v => { state[v].page = 1; });
   pollSync().then(() => loadOverview()).then(keyPreview);
   go('overview');
+
+  /* 从报价系统的「查跟进档案」过来：网址里带 q=客户名 → 到「全部客户」里按名字找，只有一个就直接打开 */
+  const q0 = new URLSearchParams(location.search).get('q');
+  if (q0 && q0.trim()) {
+    history.replaceState(null, '', location.pathname);
+    $('.filters[data-view=all] [data-f=q]').value = q0.trim();
+    go('all');
+    const r = await api('GET', '/api/list?' + query('all', 1, 5));
+    if (r.ok && r.total === 1) openCustomer(r.rows[0].id);
+  }
 }
 
 /* ---------------- 页面切换 ---------------- */
@@ -301,10 +315,13 @@ async function openCustomer(id) {
   const f = c.follow;
   const history = f && f.history.length ? '<div class="dim" style="margin-top:6px">跟进记录：<br>' +
     f.history.slice(0, 6).map(h => esc(fmtTs(h.ts) + '　' + h.by + ' · ' + (RESULT[h.result] ? RESULT[h.result].name : h.result) + (h.note ? '：' + h.note : ''))).join('<br>') + '</div>' : '';
+  /* 去报价系统给他做报价：带上客户名和联系人，报价页面会自动填好 */
+  const quoteUrl = '/?cust=' + encodeURIComponent(c.name) + (c.linkman ? '&contact=' + encodeURIComponent(c.linkman) : '');
   $('#drawer').innerHTML =
     '<button class="close" id="btnClose">×</button>' +
     '<h2>' + (c.key ? '<span class="star">★</span>' : '') + esc(c.name) + '</h2>' +
     '<div class="dim">' + esc(info) + '</div>' + (c.addr ? '<div class="dim">地址：' + esc(c.addr) + '</div>' : '') +
+    '<div style="margin-top:8px"><a class="btn sm quote-link" href="' + quoteUrl + '" title="到纸杯报价里给这个客户做一份报价，客户名和联系人会自动带入">给他做报价 ›</a></div>' +
     '<div class="stats">' + stat(statusText(c), '当前状态', 'color:' + color) + stat(c.cycle ? c.cycle + ' 天' : '—', '复购周期（按 ' + c.gaps + ' 次间隔算）') +
       stat(c.n, '历史订单') + stat(yuan(c.money), '历史金额') + '</div>' +
     '<div class="dim" style="margin-top:6px">近 12 个月 ' + c.n12 + ' 单 · ' + yuan(c.money12) + ' 元｜常买：' + esc((c.topProds || []).join('、') || '—') +

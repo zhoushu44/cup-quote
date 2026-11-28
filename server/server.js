@@ -15,10 +15,26 @@ const erp = require('./erp');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA = process.env.DATA || '/data';
-const ROOT = process.env.ROOT || path.join(__dirname, '..', 'public');
+/* 网页目录：镜像里是 public/；直接在仓库里跑（没有 public/）就用仓库根目录 */
+const ROOT = process.env.ROOT || (fs.existsSync(path.join(__dirname, '..', 'public', 'index.html'))
+  ? path.join(__dirname, '..', 'public') : path.join(__dirname, '..'));
 const QDIR = path.join(DATA, 'q');
 const MAX_BODY = 20 * 1024 * 1024;      // 版面图压缩后约 0.2~1MB，留足余量
 const LIST_MAX = 30;
+
+/* ---------- 客户跟进模块：页面在 /crm/，接口在 /api/crm/*，数据在 DATA/crm/ ----------
+ * ERP 账号用同一个 DATA/erp.json，和报价系统共用一份。模块起不来也不影响报价。 */
+const CRM_WEB = '/crm';
+const CRM_API = '/api/crm/';
+const crm = require('./crm');
+let crmApi = null;
+try {
+  const c = crm.mount({ data: path.join(DATA, 'crm'), erpData: DATA });
+  crmApi = c.handleApi;
+  console.log('客户跟进：客户 ' + c.customers + ' 个，订单 ' + c.orders + ' 条');
+} catch (e) {
+  console.error('客户跟进模块没有启动（报价功能不受影响）：', e.message);
+}
 
 fs.mkdirSync(QDIR, { recursive: true });
 
@@ -124,11 +140,13 @@ const MIME = {
 };
 
 /* ---------- 静态文件 ---------- */
-function serveStatic(req, res, url) {
+/* base：从哪个目录取文件。默认是报价页面；客户跟进页面传它自己的目录 */
+function serveStatic(req, res, url, base) {
+  const dir = base || ROOT;
   let p = decodeURIComponent(url.pathname);
   if (p === '/' || p === '') p = '/index.html';
-  const file = path.normalize(path.join(ROOT, p));
-  if (file.indexOf(ROOT) !== 0 || p.indexOf('/.') >= 0) { send(res, 403, '禁止访问'); return; }
+  const file = path.normalize(path.join(dir, p));
+  if (file.indexOf(dir) !== 0 || p.indexOf('/.') >= 0) { send(res, 403, '禁止访问'); return; }
 
   fs.stat(file, function (err, st) {
     if (err || !st.isFile()) { send(res, 404, '找不到页面'); return; }
@@ -420,6 +438,21 @@ function ymd() {
 const server = http.createServer(function (req, res) {
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   if (url.pathname === '/healthz') return send(res, 200, 'ok\n', { 'Content-Type': 'text/plain' });
+
+  /* 客户跟进：接口 /api/crm/*，页面 /crm/（去掉 /crm 前缀后从它自己的 public 目录取） */
+  if (url.pathname.indexOf(CRM_API) === 0) {
+    if (!crmApi) return json(res, 503, { ok: false, error: '客户跟进模块没有启动' });
+    crmApi(req, res, url);
+    return;
+  }
+  if (url.pathname === CRM_WEB || url.pathname.indexOf(CRM_WEB + '/') === 0) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') { send(res, 405, '不支持的方法'); return; }
+    const rel = new URL(url.pathname.slice(CRM_WEB.length) || '/', 'http://localhost');
+    rel.search = url.search;
+    serveStatic(req, res, rel, path.join(__dirname, 'crm', 'public'));
+    return;
+  }
+
   if (url.pathname.indexOf('/api/') === 0) {
     serveApi(req, res, url).catch(function (e) {
       if (e.message !== 'too large') console.error(e);

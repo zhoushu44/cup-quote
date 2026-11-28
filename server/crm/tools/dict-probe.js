@@ -2,7 +2,7 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const DATA = path.join(__dirname, '..', 'data');
+const DATA = path.join(__dirname, '..', '..', '..', 'data', 'crm');
 const sync = require('../erp-sync');
 
 (async () => {

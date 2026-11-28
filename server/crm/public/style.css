@@ -140,3 +140,7 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; paddi
 .tcol.empty .l { visibility: hidden; }
 #scTrendSum { margin-top: 6px; }
 @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr; } }
+/* 并入报价系统：左上角返回报价 */
+.back-link { margin-left: 10px; font-size: 12px; color: var(--ink3); text-decoration: none; }
+.back-link:hover { color: var(--ac); }
+a.btn.quote-link { display: inline-block; text-decoration: none; color: var(--ac); border-color: #e6c3b0; background: var(--ac-soft); }
