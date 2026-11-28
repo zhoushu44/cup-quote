@@ -30,6 +30,24 @@ function loadCfg(DATA) {
   return cfg;
 }
 
+/* 保存账号配置：pass 传 null 表示保持原密码 */
+function writeCfg(DATA, patch) {
+  const cur = Object.assign({}, loadCfg(DATA));
+  ['url', 'user', 'pass'].forEach(function (k) {
+    if (patch[k] !== undefined && patch[k] !== null) cur[k] = String(patch[k]).trim();
+  });
+  cfg = cur;
+  token = null;
+  fs.mkdirSync(DATA, { recursive: true });
+  writeJson(path.join(DATA, 'erp.json'), cur);
+  return cur;
+}
+
+function maskCfg(DATA) {
+  const s = status(DATA);
+  return Object.assign(s, { pass: s.configured ? '******' : '' });
+}
+
 function status(DATA) {
   const c = loadCfg(DATA);
   return { configured: !!(c.user && c.pass), url: c.url, user: c.user };
@@ -123,4 +141,4 @@ async function syncAll(DATA, onProgress) {
   return meta;
 }
 
-module.exports = { status, loadCfg, login, get, syncAll };
+module.exports = { status, maskCfg, writeCfg, loadCfg, login, get, syncAll };

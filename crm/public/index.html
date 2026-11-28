@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>客户营销 · 老客户返单提醒</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bar">
+  <div class="logo">客户营销</div>
+  <div class="tabs" id="tabs">
+    <button data-page="overview" class="on">概览</button>
+    <button data-page="daily">今日跟进 <i id="badgeDaily" style="display:none"></i></button>
+    <button data-page="sleep">沉睡唤醒</button>
+    <button data-page="all">全部客户</button>
+    <button data-page="settings">设置</button>
+  </div>
+  <div class="bar-right">
+    <span id="metaInfo">加载中…</span>
+    <button class="btn" id="btnSync">同步 ERP</button>
+  </div>
+</div>
+
+<main>
+  <!-- 概览 -->
+  <section class="page on" id="page-overview">
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h3>按业务员看 <span class="dim">点一行名字进入该业务员的今日跟进名单</span></h3>
+      <table id="tblSales"><thead><tr>
+        <th>业务员</th><th class="num">客户</th><th class="num">重点</th><th class="num">已逾期</th><th class="num">快到期</th>
+        <th class="num">沉睡</th><th class="num">近12个月金额</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- 名单（今日跟进 / 沉睡唤醒 / 全部客户 共用一套筛选和表格） -->
+  <section class="page" id="page-daily">
+    <div class="card">
+      <div class="filters" data-view="daily">
+        <select data-f="sale"><option value="">全部业务员</option></select>
+        <select data-f="status"></select>
+        <label><input type="checkbox" data-f="key"> 只看重点</label>
+        <input type="text" data-f="q" placeholder="搜客户名 / 联系人 / 手机 / 备注" style="width:230px">
+        <select data-f="sort">
+          <option value="score">排序：优先级</option><option value="since">排序：最久没下单</option>
+          <option value="money">排序：近12个月金额</option><option value="cycle">排序：逾期天数</option>
+        </select>
+        <span class="sp"></span>
+        <button class="btn acc" data-act="copy">复制名单（发给业务员）</button>
+      </div>
+      <div class="dim" id="hint-daily" style="margin-bottom:8px"></div>
+      <table data-t="list"><thead><tr>
+        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>备注</th>
+      </tr></thead><tbody></tbody></table>
+      <div class="pager"><span data-t="count"></span><button class="btn sm" data-act="prev">上一页</button><span data-t="pg"></span><button class="btn sm" data-act="next">下一页</button></div>
+    </div>
+  </section>
+  <section class="page" id="page-sleep">
+    <div class="card">
+      <div class="filters" data-view="sleep">
+        <select data-f="sale"><option value="">全部业务员</option></select>
+        <select data-f="status"></select>
+        <label><input type="checkbox" data-f="key"> 只看重点</label>
+        <input type="text" data-f="q" placeholder="搜客户名 / 联系人 / 手机 / 备注" style="width:230px">
+        <select data-f="sort">
+          <option value="score">排序：优先级</option><option value="money">排序：近12个月金额</option>
+          <option value="since">排序：最久没下单</option><option value="cycle">排序：逾期天数</option>
+        </select>
+        <span class="sp"></span>
+        <button class="btn acc" data-act="copy">复制名单（发给业务员）</button>
+      </div>
+      <div class="dim" id="hint-sleep" style="margin-bottom:8px"></div>
+      <table data-t="list"><thead><tr>
+        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>备注</th>
+      </tr></thead><tbody></tbody></table>
+      <div class="pager"><span data-t="count"></span><button class="btn sm" data-act="prev">上一页</button><span data-t="pg"></span><button class="btn sm" data-act="next">下一页</button></div>
+    </div>
+  </section>
+  <section class="page" id="page-all">
+    <div class="card">
+      <div class="filters" data-view="all">
+        <select data-f="sale"><option value="">全部业务员</option></select>
+        <select data-f="status"></select>
+        <label><input type="checkbox" data-f="key"> 只看重点</label>
+        <input type="text" data-f="q" placeholder="搜客户名 / 联系人 / 手机 / 备注" style="width:230px">
+        <select data-f="sort">
+          <option value="money">排序：近12个月金额</option><option value="score">排序：优先级</option>
+          <option value="since">排序：最久没下单</option><option value="cycle">排序：逾期天数</option>
+        </select>
+        <span class="sp"></span>
+        <button class="btn" data-act="copy">复制名单</button>
+      </div>
+      <div class="dim" id="hint-all" style="margin-bottom:8px"></div>
+      <table data-t="list"><thead><tr>
+        <th>客户</th><th>业务员</th><th>状态</th><th>周期</th><th class="num">近12月</th><th>上次下单</th><th>常买</th><th>备注</th>
+      </tr></thead><tbody></tbody></table>
+      <div class="pager"><span data-t="count"></span><button class="btn sm" data-act="prev">上一页</button><span data-t="pg"></span><button class="btn sm" data-act="next">下一页</button></div>
+    </div>
+  </section>
+
+  <!-- 设置 -->
+  <section class="page" id="page-settings">
+    <div class="card">
+      <h3>重点客户规则 <span class="dim">满足任意一条就自动标为重点，不用人工打标</span></h3>
+      <div class="form" id="keyForm">
+        <label>近 12 个月采购金额 ≥</label><input data-s="keyMoney12m"><span class="dim">元</span>
+        <label>或 近 12 个月单数 ≥</label><input data-s="keyOrders12m"><span class="dim">单</span>
+        <label>按单数算时，金额至少</label><input data-s="keyCountMinMoney"><span class="dim">元（挡掉单多量小的）</span>
+      </div>
+      <div class="dim" id="keyPreview" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h3>返单提醒规则</h3>
+      <div class="form" id="ruleForm">
+        <label>复购周期的 ≥</label><input data-s="dueRatio"><span class="dim">%（填 80）已过 → 提示「快到期」</span>
+        <label>超过周期的</label><input data-s="sleepRatio"><span class="dim">倍 且不少于右边天数 → 沉睡</span>
+        <label>沉睡至少间隔</label><input data-s="sleepMinDays"><span class="dim">天</span>
+        <label>超过</label><input data-s="lostDays"><span class="dim">天没下单 → 流失（不再进名单）</span>
+        <label>两次下单间隔小于</label><input data-s="minGap"><span class="dim">天 → 视为同一批，不算一个周期</span>
+        <label>间隔超过</label><input data-s="maxGap"><span class="dim">天 → 不参与算周期</span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>哪些订单不算数 <span class="dim">ERP 字典：0 正常、-1 作废、2 暂停、3 强制终止；实际数据里作废单记的是 1</span></h3>
+      <div class="checks" id="voidForm">
+        <label><input type="checkbox" data-v="0"> 0 正常</label>
+        <label><input type="checkbox" data-v="1"> 1 作废</label>
+        <label><input type="checkbox" data-v="2"> 2 暂停</label>
+        <label><input type="checkbox" data-v="3"> 3 强制终止</label>
+        <span class="dim">勾上的不参与统计</span>
+      </div>
+      <div style="margin-top:12px"><button class="btn pri" id="btnSaveRules">保存规则</button></div>
+    </div>
+    <div class="card">
+      <h3>ERP 账号与同步 <span class="dim">只读 ERP，不回写；密码存在服务器 data/erp.json，不进 git</span></h3>
+      <div class="form">
+        <label>ERP 地址</label><input id="erpUrl" style="grid-column: 2 / -1">
+        <label>账号</label><input id="erpUser"><span></span>
+        <label>密码</label><input id="erpPass" type="password" placeholder="不改就留空"><span></span>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn pri" id="btnSaveErp">保存账号</button>
+        <button class="btn" id="btnSync2">立即同步</button>
+      </div>
+      <div class="log" id="syncLog" style="margin-top:12px"></div>
+    </div>
+  </section>
+</main>
+
+<div class="mask" id="mask"></div>
+<aside class="drawer" id="drawer"></aside>
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

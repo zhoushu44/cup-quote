@@ -5269,7 +5269,7 @@
       /* 产品与纸种自动按报价单匹配（隐藏，不需要人工选） */
       '<div style="display:none"><select id="erpProd"></select><select id="erpPaper"></select></div>' +
       '<label>装箱<select id="erpPk"></select></label>' +
-      '<label>包装要求（写进 ERP 的包装要求，可选）<input id="erpPack" list="erpPackList" placeholder="选一个或直接输入"><datalist id="erpPackList"><option value="定制彩盒"><option value="定制纸箱"><option value="定制收缩膜"><option value="客户自备"><option value="不用包装"></datalist></label>' +
+      '<label id="erpPackRow" style="display:none">包装要求（定制内容，写进 ERP 包装要求）<input id="erpPack" placeholder="如：定制彩盒 / 装茶不用包装"></label>' +
       '<label>客户（报价单自动带过去，ERP 没有同名会自动建档）<span class="dim">' + esc(q.customer || '') + '　' + esc(q.contact || '') + '</span></label>' +
       '<label>业务员（选 ERP 系统用户，存进客户档案）<select id="erpSale"><option value="">（不填）</option></select></label>' +
       '<label>交货日期（今天 + 生产周期' + (num(q.leadDays) || 7) + ' 天）<input id="erpDate" type="date" value="' + defDate + '"></label>' +
@@ -5301,11 +5301,19 @@
         selK.innerHTML = ERP.pk.map(function (p) {
           return '<option value="' + p.goodId + '" data-per="' + p.per + '"' + (pick && p.goodId === pick.goodId ? ' selected' : '') + '>' +
             esc(p.name) + '（每箱 ' + fq(p.per) + ' 只）</option>';
-        }).join('');
+        }).join('') + '<option value="custom">定制…</option>';
+        syncPackRow();
       });
+    }
+    /* 装箱选「定制…」才出现包装要求输入框 */
+    function syncPackRow() {
+      var row = $('#erpPackRow'), inp = $('#erpPack');
+      if (row) row.style.display = selK.value === 'custom' ? '' : 'none';
+      if (selK.value !== 'custom' && inp) inp.value = '';
     }
     loadPk();
     loadPaper();
+    selK.onchange = syncPackRow;
     selP.onchange = function () { selK.innerHTML = '<option>加载中…</option>'; selPa.innerHTML = '<option>加载中…</option>'; loadPk(); loadPaper(); };
 
     /* 客户名称/联系人直接取报价单，ERP 确认框不再输入 */
@@ -5322,9 +5330,16 @@
       var cust = String(q.customer || '').trim();
       if (!cust) { toast('报价单还没填客户公司'); return; }
       var opt = selK.options[selK.selectedIndex];
+      /* 选了「定制…」：装箱规格仍按数量自动挑最合适的（planVoList 需要），定制内容走包装要求 */
+      if (selK.value === 'custom') {
+        var autoPk = erpPickPk(num(q.qty)) || ERP.pk[0];
+        opt = null;
+        for (var oi = 0; oi < selK.options.length; oi++) if (num(selK.options[oi].value) === autoPk.goodId) { opt = selK.options[oi]; break; }
+      }
       var per = opt ? num(opt.dataset.per) : 0;
       if (!per) { toast('装箱规格没取到'); return; }
       var count = Math.ceil(q.qty / per);
+      var packSelVal = selK.value === 'custom' ? opt.value : selK.value;
       var btn = $('#erpGo');
       btn.disabled = true; btn.textContent = '正在下单…';
       var order = {
@@ -5336,7 +5351,7 @@
         sendFee: 0, trueSendFee: freightCharged, deliverTime: $('#erpDate').value,
         remark: $('#erpRemark').value.trim(), paperRemark: '', mainOrderInfo: $('#erpLayout').value.trim(),
         operate: 2, orderStatus: 0, origin: '线下渠道', autoLayoutFlag: 0,
-        planVoList: [{ packageType: 0, packageId: num(selK.value), count: count, num: per }]
+        planVoList: [{ packageType: 0, packageId: num(packSelVal), count: count, num: per }]
       };
       /* 纸种关键词与工艺名，给服务端去 ERP 字典里匹配 */
       var paperTxt = String(q.paper || '');
@@ -5353,7 +5368,7 @@
         paperKw: paperKw.replace(/g$/i, ''),
         saleMan: $('#erpSale').value.trim(),
         logistics: $('#erpLogi').value.trim(),
-        packInfo: $('#erpPack') ? $('#erpPack').value.trim() : '',
+        packInfo: (selK.value === 'custom' && $('#erpPack')) ? $('#erpPack').value.trim() : '',
         paper: (selPa.value ? { suttleId: num(selPa.value), name: selPa.options[selPa.selectedIndex].getAttribute('data-name'), paperName: selPa.options[selPa.selectedIndex].getAttribute('data-paper') } : null),
         design: (state.quoteImg && state.quoteImg.src) ? {
           name: (q.no ? q.no : 'layout') + '-版面图.jpg',
